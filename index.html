@@ -129,6 +129,10 @@ table.trip input[type=time]{min-height:40px;width:6.6em}
 .state{font-weight:700}
 .state.dirty{color:var(--warn)}
 .state.ok{color:var(--accent)}
+.tripf{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;align-items:end}
+.tripf select{width:100%}
+.vcard.trip-pick{border-left:4px solid var(--pick)}
+.vcard.trip-drop{border-left:4px solid var(--drop)}
 /* 利用者管理 */
 .wk td{white-space:nowrap}
 .wk .t{font-family:var(--font-num);font-size:13px;line-height:1.45}
@@ -231,9 +235,10 @@ table.sheet tr.none td{color:var(--muted);background:var(--surface)}
  days/<YYYY-MM-DD>  作成した日の送迎表。名前・時間・車両をすべて写して保存するため、
                  後で利用者の登録内容を変えても過去の送迎表は変わらない。
    { date, savedAt,
-     trips:{ <vid>:{ pick:{driver,helper}, drop:{driver,helper} } },
+     trips:[ { id, type:"pick"|"drop", vid, driver, helper, dep, arr, auto } ],   … 送迎便。運転手・添乗員は便ごと
+
      riders:[ { key, cid, name, extra,
-                pick:{on,dep,arr,vid,note}, drop:{on,dep,arr,vid,note} } ] }
+                pick:{on,dep,arr,vid,tid,note}, drop:{on,dep,arr,vid,tid,note} } ] }   … tid＝乗る便
 */
 const WD=['sun','mon','tue','wed','thu','fri','sat'];
 const WDJ=['日','月','火','水','木','金','土'];
@@ -366,32 +371,63 @@ function defaultLegs(c,date){
 }
 function upcomingDates(c,from){return [...new Set(patternsOf(c).filter(p=>p.mode==='date').flatMap(p=>p.dates))].filter(d=>d>=from).sort()}
 
-/* ---------- 当日データ ---------- */
-function normLeg(L,vid){L=L||{};if(L.time&&!L.arr)L.arr=L.time;delete L.time;return {on:!!L.on,dep:L.dep||'',arr:L.arr||'',vid:L.vid||vid,note:L.note||''}}
+/* ---------- 当日データ（送迎便） ---------- */
+function normLeg(L,vid){L=L||{};if(L.time&&!L.arr)L.arr=L.time;delete L.time;return {on:!!L.on,dep:L.dep||'',arr:L.arr||'',vid:L.vid||vid,tid:L.tid||'',note:L.note||''}}
+function newTrip(type,vid,auto){return {id:uid('t'),type,vid:vid||firstVid(),driver:'',helper:'',dep:'',arr:'',auto:!!auto}}
+function byDep(a,b){return (a.dep||'99').localeCompare(b.dep||'99')}
 function normalizeDay(d){
-  d.trips=d.trips||{};
-  vehicles().forEach(v=>{d.trips[v.id]=d.trips[v.id]||{};TYPES.forEach(([k])=>{const o=d.trips[v.id][k]||{};d.trips[v.id][k]={driver:o.driver??v.driver??'',helper:o.helper??v.helper??''}})});
   d.riders=(d.riders||[]).map(r=>{const fv=firstVid();r.pick=normLeg(r.pick,fv);r.drop=normLeg(r.drop,fv);
     if(r.note&&!r.pick.note&&!r.drop.note){r.pick.note=r.note;r.drop.note=r.note}delete r.note;return r});
+  if(!Array.isArray(d.trips)){ // 以前の「車両ごとに運転手1人」の保存形式を、車両×迎え／送りの便に読み替える
+    const old=d.trips||{},list=[];
+    d.riders.forEach(r=>TYPES.forEach(([k])=>{const L=r[k];if(!L.on)return;const id=L.vid+'_'+k;
+      if(!list.some(x=>x.id===id)){const o=(old[L.vid]||{})[k]||{};list.push({id,type:k,vid:L.vid,driver:o.driver||'',helper:o.helper||'',dep:'',arr:'',auto:true})}
+      L.tid=id}));
+    d.trips=list;
+  }
+  d.trips=d.trips.map(x=>({id:x.id,type:x.type==='drop'?'drop':'pick',vid:x.vid||firstVid(),driver:x.driver||'',helper:x.helper||'',dep:x.dep||'',arr:x.arr||'',auto:!!x.auto}));
+  return syncTrips(d);
+}
+function tripById(d,id){return d.trips.find(x=>x.id===id)}
+function tripsOf(d,type){return d.trips.filter(x=>x.type===type).sort(byDep)}
+/* 便が決まっていない迎え／送りを、同じ車両・区分の便に入れる（出発時間がその便以降で一番近い便。なければ便を作る） */
+function assignTrip(d,L,k){
+  const c=d.trips.filter(x=>x.type===k&&x.vid===L.vid).sort(byDep),tm=L.dep||L.arr;
+  let tr=c.length?(tm?(c.filter(x=>!x.dep||x.dep<=tm).pop()||c[0]):c[0]):null;
+  if(!tr){tr=newTrip(k,L.vid,true);d.trips.push(tr)}
+  L.tid=tr.id;
+}
+function syncTrips(d){
+  d.riders.forEach(r=>TYPES.forEach(([k])=>{const L=r[k];if(!L.on)return;const tr=tripById(d,L.tid);
+    if(!tr||tr.type!==k)assignTrip(d,L,k);else L.vid=tr.vid}));
+  const used=new Set(d.riders.flatMap(r=>TYPES.filter(([k])=>r[k].on).map(([k])=>r[k].tid)));
+  d.trips=d.trips.filter(x=>!x.auto||used.has(x.id)); // 自動で作った便は、誰もいなくなったら消す
+  d.trips.forEach(x=>{if(!x.auto)return;const ls=d.riders.map(r=>r[x.type]).filter(L=>L.on&&L.tid===x.id);
+    const deps=ls.map(L=>L.dep).filter(Boolean).sort(),arrs=ls.map(L=>L.arr).filter(Boolean).sort();
+    x.dep=deps[0]||'';x.arr=arrs[arrs.length-1]||''});
   return d;
 }
-function buildDay(date){return normalizeDay({date,trips:{},riders:[]})}
+function buildDay(date){return normalizeDay({date,trips:[],riders:[]})}
 function ensureDay(){
   const saved=S.days[ui.date];
   // 手を加えていない間は、保存済みの内容（なければ空の表）を表示し直す
   if(!ui.day||ui.day.date!==ui.date||!ui.dayDirty){ui.day=saved?normalizeDay(clone(saved)):buildDay(ui.date);ui.dayDirty=false}
+  else syncTrips(ui.day);
 }
 function makeRider(c,date,legs){
   const p=patternFor(c,date),extra=!scheduledOnDate(c,date);
   const r={key:uid('r'),cid:c.id,name:c.name,extra,byDate:!extra&&p.mode==='date'};
   TYPES.forEach(([k])=>{const L=legFor(c,date,k);
-    r[k]={on:legs.includes(k),dep:L.dep,arr:L.arr,vid:L.vid,note:[L.note,c.note].filter(Boolean).join('　')}});
+    r[k]={on:legs.includes(k),dep:L.dep,arr:L.arr,vid:L.vid,tid:'',note:[L.note,c.note].filter(Boolean).join('　')}});
   return r;
 }
+/* 車両ごとの一覧（Excelなど）：便の出発順 → 利用者の出発順 */
 function legRiders(day,vid,type){
-  return (day.riders||[]).filter(r=>r[type].on&&r[type].vid===vid)
-    .sort((a,b)=>((a[type].dep||a[type].arr||'99')).localeCompare(b[type].dep||b[type].arr||'99'));
+  const ord=Object.fromEntries(tripsOf(day,type).map((x,i)=>[x.id,i]));
+  return (day.riders||[]).filter(r=>r[type].on&&(tripById(day,r[type].tid)||{}).vid===vid)
+    .sort((a,b)=>(ord[a[type].tid]-ord[b[type].tid])||((a[type].dep||a[type].arr||'99')).localeCompare(b[type].dep||b[type].arr||'99'));
 }
+function tripRiders(day,tr){return day.riders.filter(r=>r[tr.type].on&&r[tr.type].tid===tr.id).sort((a,b)=>(a[tr.type].dep||a[tr.type].arr||'99').localeCompare(b[tr.type].dep||b[tr.type].arr||'99'))}
 function findR(k){return ui.day.riders.find(r=>r.key===k)}
 function riderOf(cid){return ui.day.riders.find(r=>r.cid===cid)}
 function pruneRider(r){if(!r.pick.on&&!r.drop.on)ui.day.riders=ui.day.riders.filter(x=>x!==r)}
@@ -420,7 +456,7 @@ function vHome(){
     <a class="tile main" href="#day" data-act="goday" data-date="${td}"><b>毎日の送迎入力</b><span>利用者の名前を押して、今日の送迎表を作ります</span></a>
     <a class="tile" href="#sheet"><b>送迎表・印刷</b><span>元のExcelと同じ形の月間送迎表、Excel・PDF出力</span></a>
     <a class="tile" href="#clients"><b>レギュラー登録</b><span>登録 ${clients().length}名・曜日や日付ごとの送迎パターン</span></a>
-    <a class="tile" href="#staff"><b>職員・車両</b><span>運転手 ${driverSlots().filter(Boolean).length}名・補助員 ${staff().filter(x=>x.role!=='driver').length}名・車両 ${vehicles().length}台</span></a>
+    <a class="tile" href="#staff"><b>職員・車両</b><span>運転手 ${driverSlots().filter(Boolean).length}名・添乗員 ${staff().filter(x=>x.role!=='driver').length}名・車両 ${vehicles().length}台</span></a>
   </div>
   <div class="panel soft stack">
     <h2>バックアップ</h2>
@@ -458,18 +494,29 @@ function clientCard(c){
     <div class="vh">${sch&&p.mode==='date'?'<span class="tag extra">日付指定</span> ':''}${vids.map(vname).map(esc).join('・')}${c.note?`　${esc(c.note)}`:''}${next?`<br>次の予定日 ${shortDate(next)}`:''}</div>
     <div class="legs">${legs}</div></div>`;
 }
-function tripTable(d,v,k){
-  const rs=legRiders(d,v.id,k);
-  if(!rs.length)return `<p class="note" style="margin:0">まだ選ばれていません</p>`;
-  return `<div class="scroll"><table class="trip"><thead><tr><th>利用者</th><th>出発時間</th><th>到着時間</th><th>車両</th><th>備考</th><th></th></tr></thead><tbody>
-  ${rs.map(r=>{const L=r[k],a=f=>`data-in="leg" data-k="${r.key}" data-t="${k}" data-f="${f}"`;
-    return `<tr><td class="n">${esc(r.name)}${r.extra?' <span class="tag extra">臨時</span>':''}</td>
-    <td><input type="time" value="${L.dep}" ${a('dep')} aria-label="${esc(r.name)} ${TL[k]}の出発時間"></td>
-    <td><input type="time" value="${L.arr}" ${a('arr')} aria-label="${esc(r.name)} ${TL[k]}の到着時間"></td>
-    <td>${vehSelect(L.vid,`data-ch="legveh" data-k="${r.key}" data-t="${k}" aria-label="車両"`)}</td>
-    <td><input type="text" value="${esc(L.note)}" ${a('note')} aria-label="備考"></td>
-    <td><button class="x" data-act="legoff" data-k="${r.key}" data-t="${k}" aria-label="${esc(r.name)}の${TL[k]}を外す" title="外す">×</button></td></tr>`}).join('')}
-  </tbody></table></div>`;
+function tripLabel(tr,i){return `${vname(tr.vid)}　${t(tr.dep)||'--:--'}発　${tr.driver||'運転手未定'}`}
+function tripCard(d,tr,i){
+  const rs=tripRiders(d,tr),a=f=>`data-in="trip" data-id="${tr.id}" data-f="${f}"`,same=tripsOf(d,tr.type);
+  return `<div class="vcard trip-${tr.type}">
+    <div class="row"><h3><span class="tag ${tr.type}">${TL[tr.type]}便 ${i+1}</span></h3><span class="note">${rs.length}名${tr.auto?'・時間は乗る人から自動':''}</span><span class="spacer"></span>
+      <button class="btn small danger" data-act="tripdel" data-id="${tr.id}" ${rs.length?'disabled title="利用者を別の便に移すか外してから削除できます"':''}>便を削除</button></div>
+    <div class="tripf">
+      <label class="f">車両${vehSelect(tr.vid,`data-ch="tripveh" data-id="${tr.id}"`)}</label>
+      <label class="f">運転手${staffSelect('driver',tr.driver,a('driver'))}</label>
+      <label class="f">添乗員${staffSelect('helper',tr.helper,a('helper'))}</label>
+      <label class="f">出発時間<input type="time" value="${tr.dep}" ${a('dep')}></label>
+      <label class="f">到着時間<input type="time" value="${tr.arr}" ${a('arr')}></label>
+    </div>
+    ${rs.length?`<div class="scroll"><table class="trip"><thead><tr><th>利用者</th><th>出発時間</th><th>到着時間</th><th>便</th><th>備考</th><th></th></tr></thead><tbody>
+    ${rs.map(r=>{const k=tr.type,L=r[k],b=f=>`data-in="leg" data-k="${r.key}" data-t="${k}" data-f="${f}"`;
+      return `<tr><td class="n">${esc(r.name)}${r.extra?' <span class="tag extra">臨時</span>':''}</td>
+      <td><input type="time" value="${L.dep}" ${b('dep')} aria-label="${esc(r.name)} ${TL[k]}の出発時間"></td>
+      <td><input type="time" value="${L.arr}" ${b('arr')} aria-label="${esc(r.name)} ${TL[k]}の到着時間"></td>
+      <td><select data-ch="legtrip" data-k="${r.key}" data-t="${k}" aria-label="乗る便">${same.map((x,j)=>`<option value="${x.id}" ${x.id===tr.id?'selected':''}>${TL[k]}便${j+1}：${esc(tripLabel(x))}</option>`).join('')}</select></td>
+      <td><input type="text" value="${esc(L.note)}" ${b('note')} aria-label="備考"></td>
+      <td><button class="x" data-act="legoff" data-k="${r.key}" data-t="${k}" aria-label="${esc(r.name)}の${TL[k]}を外す" title="外す">×</button></td></tr>`}).join('')}
+    </tbody></table></div>`:'<p class="note" style="margin:0">この便にはまだ誰も乗っていません。利用者の名前を押すか、他の便から「便」を切り替えて移してください。</p>'}
+  </div>`;
 }
 function vDay(){
   ensureDay();
@@ -478,7 +525,7 @@ function vDay(){
   const free=d.riders.filter(r=>!r.cid);
   const c=counts(d);
   return `<div class="stack">
-  <div><h1>毎日の送迎入力</h1><p class="sub">送迎する利用者の名前を押すと、登録済みの時間と車両で送迎表に入ります。もう一度押すと外れます。</p></div>
+  <div><h1>毎日の送迎入力</h1><p class="sub">送迎する利用者の名前を押すと、登録済みの時間と車両で送迎便に入ります。もう一度押すと外れます。</p></div>
   <div class="datebar">
     <button class="btn" data-act="dshift" data-n="-1">◀ 前日</button>
     <input type="date" id="dayDate" value="${ui.date}" data-ch="date" aria-label="日付">
@@ -503,14 +550,12 @@ function vDay(){
     <button class="btn" data-act="addfree" data-t="drop">お送りに追加</button>
     ${free.length?`<span class="note">追加済み：${free.map(r=>esc(r.name)).join('、')}</span>`:''}
   </section>
-  <section class="stack"><h2>${shortDate(ui.date)} の送迎表（車両別）</h2>
-    <p class="note" style="margin:0">時間・車両・備考・運転手・補助員はこの日だけ変更できます。利用者の登録内容は変わりません。</p>
-    <div class="vgrid">${vehicles().map(v=>`<div class="vcard"><h3>${esc(v.name)}</h3>
-      ${TYPES.map(([k,l])=>`<div class="legbox"><div class="who"><span class="tag ${k}">${l}</span>
-        <label class="f">運転手${staffSelect('driver',d.trips[v.id][k].driver,`data-in="trip" data-vid="${v.id}" data-t="${k}" data-f="driver"`)}</label>
-        <label class="f">補助員${staffSelect('helper',d.trips[v.id][k].helper,`data-in="trip" data-vid="${v.id}" data-t="${k}" data-f="helper"`)}</label></div>
-        ${tripTable(d,v,k)}</div>`).join('')}
-    </div>`).join('')}</div>
+  <section class="stack"><div class="row"><h2>${shortDate(ui.date)} の送迎便</h2><span class="spacer"></span>
+      <button class="btn small" data-act="tripcopy">前回の同じ曜日の便を読み込む</button></div>
+    <p class="note" style="margin:0">便ごとに車両・運転手・添乗員・出発／到着時間を設定します。同じ車両で何便でも作れ、1つの便を変えても他の便は変わりません。利用者は、同じ車両・区分の便のうち出発時間が近い便に自動で入ります。</p>
+    ${TYPES.map(([k,l])=>{const ts=tripsOf(d,k);return `<div class="stack" style="gap:10px">
+      <div class="row"><h3>${l}便（${ts.length}便）</h3><span class="spacer"></span><button class="btn small" data-act="tripadd" data-t="${k}">＋ ${l}便を追加</button></div>
+      ${ts.length?`<div class="vgrid">${ts.map((x,i)=>tripCard(d,x,i)).join('')}</div>`:`<p class="note" style="margin:0">${l}便はまだありません。利用者を選ぶと自動で作られます。</p>`}</div>`}).join('')}
   </section></div>`;
 }
 function saveBar(){
@@ -533,9 +578,10 @@ function xlTitle(v){return `車　両　送　迎　記　録　表　 ( 車両�
 function excelGroups(ym,vid){
   const out=[];
   Object.keys(S.days).filter(k=>k.startsWith(ym+'-')).sort().forEach(date=>{
-    const d=normalizeDay(clone(S.days[date]));if(!d.trips[vid])return;
-    const L=k=>legRiders(d,vid,k).map(r=>({name:r.name,dep:r[k].dep,arr:r[k].arr,note:r[k].note}));
-    const g={date,pick:L('pick'),drop:L('drop'),pd:d.trips[vid].pick.driver,ph:d.trips[vid].pick.helper,dd:d.trips[vid].drop.driver,dh:d.trips[vid].drop.helper};
+    const d=normalizeDay(clone(S.days[date]));
+    const L=k=>legRiders(d,vid,k).map(r=>{const tr=tripById(d,r[k].tid)||{};
+      return {name:r.name,dep:r[k].dep||tr.dep||'',arr:r[k].arr||tr.arr||'',note:r[k].note,driver:tr.driver||'',helper:tr.helper||''}});
+    const g={date,pick:L('pick'),drop:L('drop')};
     if(g.pick.length||g.drop.length)out.push(g);
   });
   return out;
@@ -550,8 +596,8 @@ function xlRows(groups){
   return groups.map(g=>{const n=Math.max(g.pick.length,g.drop.length);let h='';
     for(let i=0;i<n;i++){const p=g.pick[i],q=g.drop[i];
       const cls=[i===0?'gf':'',i===n-1?'gl':''].join(' ');
-      h+=`<tr class="${cls}"><td class="a">${i===0?md(g.date):''}</td><td>${p?esc(g.pd):''}</td><td>${p?esc(g.ph):''}</td><td>${p?esc(p.name):''}</td><td>${p?t(p.dep):''}</td><td>${p?t(p.arr):''}</td><td class="l">${p?esc(p.note):''}</td>
-      <td></td><td>${q?esc(g.dd):''}</td><td>${q?esc(g.dh):''}</td><td>${q?esc(q.name):''}</td><td>${q?t(q.dep):''}</td><td>${q?t(q.arr):''}</td><td class="l n">${q?esc(q.note):''}</td></tr>`}
+      h+=`<tr class="${cls}"><td class="a">${i===0?md(g.date):''}</td><td>${p?esc(p.driver):''}</td><td>${p?esc(p.helper):''}</td><td>${p?esc(p.name):''}</td><td>${p?t(p.dep):''}</td><td>${p?t(p.arr):''}</td><td class="l">${p?esc(p.note):''}</td>
+      <td></td><td>${q?esc(q.driver):''}</td><td>${q?esc(q.helper):''}</td><td>${q?esc(q.name):''}</td><td>${q?t(q.dep):''}</td><td>${q?t(q.arr):''}</td><td class="l n">${q?esc(q.note):''}</td></tr>`}
     return h}).join('');
 }
 function xlTail(){ // 元の表と同じく、最後の日の下に空欄の行を残す
@@ -699,8 +745,8 @@ async function buildXlsx(vid){
   const rows=[];let r=5;
   excelGroups(ui.month,vid).forEach(g=>{const n=Math.max(g.pick.length,g.drop.length);
     for(let i=0;i<n;i++){const p=g.pick[i],q=g.drop[i];
-      const vals=[i===0?xSerial(g.date):null,p?g.pd:null,p?g.ph:null,p?p.name:null,p?xTime(p.dep):null,p?xTime(p.arr):null,p?p.note:null,
-                  null,q?g.dd:null,q?g.dh:null,q?q.name:null,q?xTime(q.dep):null,q?xTime(q.arr):null,q?q.note:null];
+      const vals=[i===0?xSerial(g.date):null,p?p.driver:null,p?p.helper:null,p?p.name:null,p?xTime(p.dep):null,p?xTime(p.arr):null,p?p.note:null,
+                  null,q?q.driver:null,q?q.helper:null,q?q.name:null,q?xTime(q.dep):null,q?xTime(q.arr):null,q?q.note:null];
       rows.push(xRow(r++,n===1?single:i===0?XL.first:i===n-1?XL.last:XL.mid,vals,i===n-1))}});
   rows.push(xRow(r++,XL.after,[],false));
   for(let i=0;i<4;i++)rows.push(xRow(r++,XL.plain,[],false));
@@ -796,7 +842,7 @@ function vStaff(){
   const vs=vehicles(),drv=driverSlots(),hel=staff().filter(s=>s.role!=='driver');
   const stSel=(id,active,ch)=>`<select data-ch="${ch}" data-id="${id}" aria-label="使用状態"><option value="1" ${active?'selected':''}>有効</option><option value="0" ${active?'':'selected'}>無効</option></select>`;
   return `<div class="stack">
-  <div><h1>職員・車両</h1><p class="sub">運転手と補助員を登録すると、送迎入力の画面で選べます。名前はいつでも直せます。</p></div>
+  <div><h1>職員・車両</h1><p class="sub">運転手と添乗員を登録すると、送迎入力の画面で選べます。名前はいつでも直せます。</p></div>
   <section class="panel stack"><div class="row"><h2>運転手</h2><span class="note">最大${MAX_DRIVERS}人まで登録できます。「無効」にすると選択肢から外れます。</span></div>
     <div class="scroll"><table class="grid"><thead><tr><th style="width:3em">No.</th><th>運転手名</th><th style="width:8em">使用状態</th></tr></thead><tbody>
     ${drv.map((s,i)=>`<tr><td class="num">${i+1}</td>
@@ -804,20 +850,18 @@ function vStaff(){
       <td>${s?stSel('d'+(i+1),s.active!==false,'dactive'):'<span class="note">—</span>'}</td></tr>`).join('')}
     </tbody></table></div>
   </section>
-  <section class="panel stack"><div class="row"><h2>補助員</h2><span class="note">人数の上限はありません。</span></div>
-    ${hel.length?`<div class="scroll"><table class="grid"><thead><tr><th>補助員名</th><th style="width:8em">使用状態</th><th style="width:7em"></th></tr></thead><tbody>
-    ${hel.map(s=>`<tr><td><input type="text" value="${esc(s.name)}" data-ch="hname" data-id="${s.id}" aria-label="補助員の名前"></td>
+  <section class="panel stack"><div class="row"><h2>添乗員</h2><span class="note">人数の上限はありません。</span></div>
+    ${hel.length?`<div class="scroll"><table class="grid"><thead><tr><th>添乗員名</th><th style="width:8em">使用状態</th><th style="width:7em"></th></tr></thead><tbody>
+    ${hel.map(s=>`<tr><td><input type="text" value="${esc(s.name)}" data-ch="hname" data-id="${s.id}" aria-label="添乗員の名前"></td>
       <td>${stSel(s.id,s.active!==false,'hactive')}</td>
       <td><button class="btn small danger ${ui.arm==='s'+s.id?'armed':''}" data-act="sdel" data-id="${s.id}">${ui.arm==='s'+s.id?'削除する':'削除'}</button></td></tr>`).join('')}
-    </tbody></table></div>`:'<div class="empty">補助員が登録されていません。</div>'}
-    <div class="row"><input type="text" id="newHelper" placeholder="補助員の名前"><button class="btn primary" data-act="hadd">補助員を追加</button></div>
+    </tbody></table></div>`:'<div class="empty">添乗員が登録されていません。</div>'}
+    <div class="row"><input type="text" id="newHelper" placeholder="添乗員の名前"><button class="btn primary" data-act="hadd">添乗員を追加</button></div>
   </section>
   <section class="panel stack"><h2>車両</h2>
-    <p class="note" style="margin:0">既定の運転手・補助員は、新しく作る日の送迎表に自動で入ります。当日の画面で変更できます。</p>
-    <div class="scroll"><table class="grid"><thead><tr><th>車両名</th><th>既定の運転手</th><th>既定の補助員</th><th></th></tr></thead><tbody>
+    <p class="note" style="margin:0">車両に運転手は固定しません。運転手・添乗員は「毎日の送迎入力」で便ごとに選びます。</p>
+    <div class="scroll"><table class="grid"><thead><tr><th>車両名</th><th></th></tr></thead><tbody>
     ${vs.map(v=>`<tr><td><input type="text" value="${esc(v.name)}" data-ch="vname" data-id="${v.id}" aria-label="車両名"></td>
-      <td>${staffSelect('driver',v.driver,`data-ch="vstaff" data-id="${v.id}" data-f="driver" aria-label="既定の運転手"`)}</td>
-      <td>${staffSelect('helper',v.helper,`data-ch="vstaff" data-id="${v.id}" data-f="helper" aria-label="既定の補助員"`)}</td>
       <td>${vs.length>1?`<button class="btn small danger ${ui.arm==='v'+v.id?'armed':''}" data-act="vdel" data-id="${v.id}">${ui.arm==='v'+v.id?'削除する':'削除'}</button>`:''}</td></tr>`).join('')}
     </tbody></table></div>
     <div class="row"><button class="btn" data-act="vadd">＋ 車両を追加</button></div>
@@ -845,6 +889,16 @@ const ACT={
     if(r)legs.forEach(k=>r[k].on=true);else ui.day.riders.push(makeRider(c,ui.date,legs))});
     ui.dayDirty=true;render()},
   alloff(){ui.day.riders=[];ui.dayDirty=true;render()},
+  tripadd(el){ui.day.trips.push(newTrip(el.dataset.t,firstVid(),false));ui.dayDirty=true;render();toast(TL[el.dataset.t]+'便を追加しました。車両・運転手・時間を選んでください')},
+  tripdel(el){ui.day.trips=ui.day.trips.filter(x=>x.id!==el.dataset.id);ui.dayDirty=true;render()},
+  tripcopy(){const wd=wdKey(ui.date),prev=Object.keys(S.days).filter(k=>k<ui.date&&wdKey(k)===wd).sort().pop();
+    if(!prev){toast('前の同じ曜日の送迎表がありません');return}
+    const src=normalizeDay(clone(S.days[prev])),d=ui.day;
+    d.trips=d.trips.filter(x=>!x.auto||tripRiders(d,x).length);
+    src.trips.forEach(x=>d.trips.push({...x,id:uid('t'),auto:false}));
+    d.riders.forEach(r=>TYPES.forEach(([k])=>{if(r[k].on)r[k].tid=''}));
+    syncTrips(d);d.trips=d.trips.filter(x=>x.auto?tripRiders(d,x).length:true);
+    ui.dayDirty=true;render();toast(shortDate(prev)+' の便（'+src.trips.length+'便）を読み込みました')},
   addfree(el){const n=document.getElementById('addName').value.trim();if(!n){toast('名前を入力してください');return}
     const k=el.dataset.t,fv=firstVid();let r=ui.day.riders.find(x=>!x.cid&&x.name===n);
     if(!r){r={key:uid('r'),cid:null,name:n,extra:true,pick:{on:false,dep:'',arr:'',vid:fv,note:''},drop:{on:false,dep:'',arr:'',vid:fv,note:''}};ui.day.riders.push(r)}
@@ -880,7 +934,7 @@ const ACT={
     const id=e.id||uid('c');materializeVehicles();
     put('clients',id,{name:e.name.trim(),note:e.note.trim(),vid:e.vid,patterns:e.patterns.map(p=>normPat(p,e))});ui.editClient=null;render();toast(e.name.trim()+' さんを保存しました')},
   cdel(){const id=ui.editClient.id;if(ui.arm!=='c'+id){ui.arm='c'+id;render();return}del('clients',id);ui.editClient=null;ui.arm=null;render();toast('削除しました（作成済みの送迎表には残ります）')},
-  hadd(){const n=document.getElementById('newHelper').value.trim();if(!n){toast('名前を入力してください');return}put('staff',uid('h'),{name:n,role:'helper',active:true});render();toast(n+' さんを補助員に追加しました')},
+  hadd(){const n=document.getElementById('newHelper').value.trim();if(!n){toast('名前を入力してください');return}put('staff',uid('h'),{name:n,role:'helper',active:true});render();toast(n+' さんを添乗員に追加しました')},
   sdel(el){const id=el.dataset.id;if(ui.arm!=='s'+id){ui.arm='s'+id;render();return}del('staff',id);ui.arm=null;render()},
   vadd(){materializeVehicles();const vs=vehicles();put('vehicles',uid('v'),{name:'車両'+(vs.length+1),order:Math.max(...vs.map(v=>v.order||0))+1,driver:'',helper:''});render()},
   vdel(el){const id=el.dataset.id;if(ui.arm!=='v'+id){ui.arm='v'+id;render();return}materializeVehicles();del('vehicles',id);ui.arm=null;render()},
@@ -891,7 +945,7 @@ const ACT={
   'restore-cancel'(){ui.restore=null;render()},
 };
 const INP={ // 入力中（再描画しない）
-  trip(el){ui.day.trips[el.dataset.vid][el.dataset.t][el.dataset.f]=el.value;markDirty()},
+  trip(el){const tr=tripById(ui.day,el.dataset.id),f=el.dataset.f;tr[f]=el.value;if(f==='dep'||f==='arr')tr.auto=false;markDirty()},
   leg(el){findR(el.dataset.k)[el.dataset.t][el.dataset.f]=el.value;markDirty()},
   c(el){ui.editClient[el.dataset.f]=el.value},
   pat(el){const i=+el.dataset.i,p=ui.editClient.patterns[i],g=el.dataset.g,f=el.dataset.f;
@@ -902,7 +956,8 @@ const INP={ // 入力中（再描画しない）
 const CHG={ // 確定時
   date(el){if(el.value){ui.date=el.value;ui.day=null;render()}},
   month(el){if(el.value){ui.month=el.value;render()}},
-  legveh(el){findR(el.dataset.k)[el.dataset.t].vid=el.value;ui.dayDirty=true;render()},
+  legtrip(el){const L=findR(el.dataset.k)[el.dataset.t],tr=tripById(ui.day,el.value);L.tid=tr.id;L.vid=tr.vid;ui.dayDirty=true;render()},
+  tripveh(el){const tr=tripById(ui.day,el.dataset.id);tr.vid=el.value;ui.dayDirty=true;render()},
   dname(el){const id='d'+el.dataset.slot,n=el.value.trim(),cur=S.staff[id];
     if(!n){if(cur){del('staff',id);toast('運転手'+el.dataset.slot+'を空欄にしました')}render();return}
     put('staff',id,{name:n,role:'driver',slot:+el.dataset.slot,active:cur?cur.active!==false:true});render();toast('運転手'+el.dataset.slot+'：'+n+' を保存しました')},
