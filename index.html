@@ -1,0 +1,856 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>B型事業所 送迎管理</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&family=BIZ+UDGothic:wght@400;700&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<style>
+/* 業務帳票レイアウト：上部タブ＋1カラムの作業面。お迎え＝朝の橙、お送り＝夕方の青で区別 */
+:root{
+  --bg:#ffffff; --surface:#f4f7f6; --line:#d6dfdd; --line-strong:#a9b8b5;
+  --fg:#1b2624; --muted:#5a6a67; --accent:#16695a; --accent-ink:#ffffff; --accent-soft:#e1f1ec;
+  --pick:#a65405; --pick-soft:#fdf0e1; --drop:#2b58a6; --drop-soft:#e8eefa;
+  --danger:#b3261e; --warn:#8a5a00; --warn-soft:#fff4d6; --desk:#e7ecea;
+  --font-body:"BIZ UDPGothic","Hiragino Kaku Gothic ProN","Yu Gothic UI","Meiryo",sans-serif;
+  --font-num:"BIZ UDGothic","BIZ UDPGothic","Yu Gothic UI","Meiryo",monospace;
+  --r:8px;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#121816; --surface:#1a2220; --line:#2d3a37; --line-strong:#4a5c58;
+  --fg:#e6eeec; --muted:#9fb0ac; --accent:#4fbfa6; --accent-ink:#0d1c18; --accent-soft:#1b3630;
+  --pick:#f0a35a; --pick-soft:#33261a; --drop:#8fb2f0; --drop-soft:#1c2638;
+  --danger:#f08a80; --warn:#e8c169; --warn-soft:#332a14; --desk:#0c100f; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#121816; --surface:#1a2220; --line:#2d3a37; --line-strong:#4a5c58;
+  --fg:#e6eeec; --muted:#9fb0ac; --accent:#4fbfa6; --accent-ink:#0d1c18; --accent-soft:#1b3630;
+  --pick:#f0a35a; --pick-soft:#33261a; --drop:#8fb2f0; --drop-soft:#1c2638;
+  --danger:#f08a80; --warn:#e8c169; --warn-soft:#332a14; --desk:#0c100f; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:var(--font-body);font-size:16px;line-height:1.6}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:10;background:var(--bg)}
+.wrap{max-width:1200px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+header{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--bg);border-bottom:1px solid var(--line)}
+.bar{display:flex;align-items:center;gap:12px;padding-block:10px;flex-wrap:wrap}
+.brand{font-weight:700;font-size:18px;margin-right:auto}
+.mode{font-size:13px;padding:2px 10px;border-radius:99px;background:var(--surface);color:var(--muted)}
+.mode.shared{background:var(--accent-soft);color:var(--accent)}
+.mode.local{background:var(--warn-soft);color:var(--warn)}
+nav{display:flex;gap:4px;overflow-x:auto}
+nav a{flex:none;text-decoration:none;color:var(--muted);padding:10px 14px;border-bottom:3px solid transparent;font-weight:700;font-size:15px}
+nav a[aria-current="page"]{color:var(--fg);border-color:var(--accent)}
+main{padding-block:20px 120px}
+h1{font-size:24px;margin:0 0 4px;text-wrap:balance}
+h2{font-size:19px;margin:0;text-wrap:balance}
+h3{font-size:17px;margin:0}
+.sub{color:var(--muted);margin:0}
+.stack{display:flex;flex-direction:column;gap:16px}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.spacer{flex:1}
+.panel{border:1px solid var(--line);border-radius:var(--r);padding:16px;background:var(--bg);min-width:0}
+.panel.soft{background:var(--surface);border-color:transparent}
+.btn{font:inherit;font-weight:700;min-height:44px;padding:8px 18px;border-radius:var(--r);border:1px solid var(--line-strong);background:var(--bg);color:var(--fg);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:6px}
+.btn:hover{background:var(--surface)}
+.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.btn.primary:hover{filter:brightness(1.08)}
+.btn.danger{color:var(--danger);border-color:var(--danger)}
+.btn.danger.armed{background:var(--danger);color:var(--bg)}
+.btn.small{min-height:36px;padding:4px 12px;font-size:14px}
+.btn.big{min-height:56px;font-size:18px;padding:8px 28px}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+input,select{font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(--line-strong);border-radius:6px;min-height:44px;padding:6px 10px;max-width:100%}
+input[type=time]{font-family:var(--font-num);width:7.4em;padding:6px 6px}
+input[type=checkbox]{width:22px;height:22px;min-height:0;accent-color:var(--accent);margin:0}
+label.f{display:flex;flex-direction:column;gap:4px;font-size:14px;color:var(--muted);font-weight:700}
+label.f input,label.f select{color:var(--fg);font-weight:400}
+.num{font-family:var(--font-num);font-variant-numeric:tabular-nums}
+.tag{display:inline-block;font-size:13px;font-weight:700;padding:1px 8px;border-radius:4px;letter-spacing:.04em;white-space:nowrap}
+.tag.pick{background:var(--pick-soft);color:var(--pick)}
+.tag.drop{background:var(--drop-soft);color:var(--drop)}
+.tag.extra{background:var(--warn-soft);color:var(--warn)}
+.scroll{overflow-x:auto;min-width:0}
+table.grid{border-collapse:collapse;width:100%}
+table.grid th,table.grid td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:middle}
+table.grid th{font-size:13px;color:var(--muted);letter-spacing:.04em;background:var(--surface);white-space:nowrap}
+.empty{padding:24px;text-align:center;color:var(--muted);border:1px dashed var(--line-strong);border-radius:var(--r)}
+.note{font-size:14px;color:var(--muted)}
+/* home */
+.today{font-size:34px;font-weight:700;line-height:1.3}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+.tile{display:flex;flex-direction:column;gap:4px;text-decoration:none;color:var(--fg);border:1px solid var(--line-strong);border-radius:var(--r);padding:18px;min-height:110px}
+.tile:hover{background:var(--surface)}
+.tile b{font-size:19px}
+.tile span{color:var(--muted);font-size:14px}
+.tile.main{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.tile.main span{color:var(--accent-ink);opacity:.85}
+/* 当日の送迎入力 */
+.datebar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.datebar input[type=date]{font-size:18px;font-family:var(--font-num)}
+.wday{font-size:22px;font-weight:700}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px}
+.card{border:2px solid var(--line);border-radius:10px;display:flex;flex-direction:column;overflow:hidden;background:var(--bg)}
+.card.sel{border-color:var(--accent);background:var(--accent-soft)}
+.card .nm{font:inherit;font-size:20px;font-weight:700;min-height:62px;padding:8px 12px;border:0;background:transparent;color:var(--fg);cursor:pointer;text-align:left;display:flex;align-items:center;gap:8px}
+.card.sel .nm{background:var(--accent);color:var(--accent-ink)}
+.card .nm .ck{width:26px;height:26px;border-radius:50%;border:2px solid var(--line-strong);flex:none;display:inline-flex;align-items:center;justify-content:center;font-size:16px}
+.card.sel .nm .ck{border-color:var(--accent-ink);background:var(--accent-ink);color:var(--accent)}
+.card .legs{display:grid;grid-template-columns:1fr 1fr;border-top:1px solid var(--line)}
+.chip{font:inherit;border:0;background:transparent;color:var(--muted);cursor:pointer;padding:6px 8px;min-height:50px;text-align:left;display:flex;flex-direction:column;line-height:1.3}
+.chip+.chip{border-left:1px solid var(--line)}
+.chip b{font-size:13px}
+.chip span{font-family:var(--font-num);font-size:13px}
+.chip.on.pick{background:var(--pick);color:var(--bg)}
+.chip.on.drop{background:var(--drop);color:var(--bg)}
+.chip.na{opacity:.45}
+.card .vh{font-size:12px;color:var(--muted);padding:2px 12px 6px}
+.card.sel .vh{color:var(--fg)}
+.vgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,520px),1fr));gap:14px}
+.vcard{border:1px solid var(--line-strong);border-radius:var(--r);padding:14px;display:flex;flex-direction:column;gap:14px;min-width:0}
+.vcard > h3{font-size:20px}
+.legbox{display:flex;flex-direction:column;gap:8px;min-width:0}
+.legbox .who{display:grid;grid-template-columns:auto 1fr 1fr;gap:8px;align-items:end}
+.legbox .who > .tag{align-self:center;font-size:14px}
+.legbox select{width:100%}
+table.trip{border-collapse:collapse;width:100%;min-width:470px}
+table.trip th{font-size:12px;color:var(--muted);text-align:left;padding:2px 4px;font-weight:700}
+table.trip td{padding:3px 4px;border-top:1px solid var(--line);vertical-align:middle}
+table.trip td.n{font-weight:700;min-width:6em}
+table.trip select{min-height:40px;padding:4px;min-width:5.6em}
+table.trip input[type=text]{min-height:40px;width:100%;min-width:6em}
+table.trip input[type=time]{min-height:40px;width:6.6em}
+.x{font:inherit;width:40px;height:40px;border-radius:6px;border:1px solid var(--line-strong);background:var(--bg);color:var(--muted);cursor:pointer;font-size:18px}
+.savebar{position:fixed;left:0;right:0;bottom:0;z-index:6;background:var(--bg);border-top:1px solid var(--line-strong);padding-bottom:env(safe-area-inset-bottom,0px)}
+.savebar .wrap{display:flex;align-items:center;gap:12px;padding-block:10px;flex-wrap:wrap}
+.state{font-weight:700}
+.state.dirty{color:var(--warn)}
+.state.ok{color:var(--accent)}
+/* 利用者管理 */
+.wk td{white-space:nowrap}
+.wk .t{font-family:var(--font-num);font-size:13px;line-height:1.45}
+.wk .t .p{color:var(--pick)} .wk .t .d{color:var(--drop)}
+.editor{border:2px solid var(--accent);border-radius:var(--r);padding:16px;display:flex;flex-direction:column;gap:14px}
+.fgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+table.week{border-collapse:collapse;min-width:640px}
+table.week th,table.week td{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left}
+table.week th{font-size:13px;color:var(--muted)}
+table.week td.dn{font-weight:700;font-size:18px;width:2.5em}
+table.week .gp{border-left:3px solid var(--pick)}
+table.week .gd{border-left:3px solid var(--drop)}
+table.week td.off input[type=time]{opacity:.4}
+/* 送迎表 */
+.tabs{display:inline-flex;gap:4px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;min-height:44px;padding:0 16px;border-radius:var(--r);border:1px solid var(--line-strong);background:var(--bg);color:var(--fg);cursor:pointer}
+.tabs button[aria-pressed="true"]{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.tabs.type button[data-v="pick"][aria-pressed="true"]{background:var(--pick);border-color:var(--pick);color:var(--bg)}
+.tabs.type button[data-v="drop"][aria-pressed="true"]{background:var(--drop);border-color:var(--drop);color:var(--bg)}
+table.sheet{border-collapse:collapse;width:100%;min-width:780px}
+table.sheet th,table.sheet td{border:1px solid var(--line-strong);padding:6px 8px;vertical-align:middle}
+table.sheet th{background:var(--surface);font-size:14px;white-space:nowrap}
+table.sheet td.dt{white-space:nowrap;font-weight:700;font-family:var(--font-num)}
+table.sheet td.dt.sat{color:var(--drop)}
+table.sheet .c{text-align:center;font-family:var(--font-num)}
+table.sheet tr.none td{color:var(--muted);background:var(--surface)}
+/* 印刷プレビュー・送迎表（紙は両テーマとも白地に黒。元のExcelの色・罫線を再現） */
+.desk{background:var(--desk);border-radius:var(--r);padding:16px;overflow:auto;max-height:80vh}
+.desk .papers{display:flex;flex-direction:column;align-items:center;gap:16px;width:max-content;margin:0 auto}
+.pg{width:297mm;height:210mm;padding:19.05mm 8.89mm 14.73mm 14.22mm;background:#fff;color:#000;box-shadow:0 1px 4px rgba(0,0,0,.25);overflow:hidden}
+.paperbg{background:#fff;border:1px solid var(--line-strong);border-radius:var(--r);padding:12px}
+.xlscreen{min-width:980px}
+.xlt{width:100%;border-collapse:collapse;table-layout:fixed;font-family:"Yu Gothic","YuGothic","游ゴシック","BIZ UDPGothic",sans-serif;font-size:10pt;color:#000;background:#fff}
+.xlt td{border:1px solid #000;height:5.82mm;padding:0 1mm;text-align:center;vertical-align:middle;white-space:nowrap;overflow:hidden;color:#000;font-variant-numeric:tabular-nums}
+.xlt td.l{text-align:left}
+.xlt tr.r1 td{border:0;background:#9dc3e6;font-weight:700;height:5.82mm}
+.xlt tr.r2 td{border:0;height:3.39mm;padding:0}
+.xlt tr.r3 td{font-weight:700}
+.xlt td.hp{background:#deebf7}
+.xlt td.hd{background:#fbe5d6}
+.xlt tr.r4 td{background:#d9d9d9;border-bottom:0;height:6.09mm}
+.xlt tr.gf td{border-top:2px solid #000}
+.xlt tr.gl td{border-bottom:2px solid #000;height:6.09mm}
+.xlt tr:not(.r1):not(.r2):not(.r3):not(.r4):not(.pad) td.a{border-left:2px solid #000}
+.xlt tr:not(.r1):not(.r2):not(.r3):not(.r4):not(.pad) td.n{border-right:2px solid #000}
+.xlt tr.t0 td{border-top:0}
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(90px + env(safe-area-inset-bottom,0px));background:var(--fg);color:var(--bg);padding:10px 18px;border-radius:var(--r);font-weight:700;z-index:20;max-width:calc(100% - 32px)}
+@media (max-width:760px){
+  .today{font-size:26px}
+  nav a{padding:10px 10px;font-size:14px}
+  .cards{grid-template-columns:repeat(auto-fill,minmax(160px,1fr))}
+  .card .nm{font-size:18px}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<style>body{margin:0}[hidden]{display:none!important}img{max-width:100%}</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <div class="bar"><span class="brand">送迎管理</span><span id="mode" class="mode">読み込み中</span></div>
+    <nav id="nav">
+      <a href="#home">ホーム</a>
+      <a href="#day">毎日の送迎入力</a>
+      <a href="#sheet">送迎表・印刷</a>
+      <a href="#clients">利用者の登録</a>
+      <a href="#staff">職員・車両</a>
+    </nav>
+  </div>
+</header>
+<main class="wrap" id="main"><p class="note">データを読み込んでいます…</p></main>
+<div id="savebar"></div>
+<div id="toast" class="toast" hidden></div>
+<script type="text/plain" id="tpl">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</script>
+
+<script>
+/* ===== データ構造 =====
+ clients/<id>  { name, note, vid(通常の車両),
+                 schedule:{ mon:{ pick:{on,dep,arr}, drop:{on,dep,arr} }, … sat } }
+ staff/<id>    { name, role:"driver"|"helper"|"both" }
+ vehicles/<id> { name, order, driver, helper }            … 既定の担当者
+ days/<YYYY-MM-DD>  作成した日の送迎表。名前・時間・車両をすべて写して保存するため、
+                 後で利用者の登録内容を変えても過去の送迎表は変わらない。
+   { date, savedAt,
+     trips:{ <vid>:{ pick:{driver,helper}, drop:{driver,helper} } },
+     riders:[ { key, cid, name, extra,
+                pick:{on,dep,arr,vid,note}, drop:{on,dep,arr,vid,note} } ] }
+*/
+const WD=['sun','mon','tue','wed','thu','fri','sat'];
+const WDJ=['日','月','火','水','木','金','土'];
+const WORK=['mon','tue','wed','thu','fri','sat'];
+const TYPES=[['pick','お迎え'],['drop','お送り']];
+const TL={pick:'お迎え',drop:'お送り'};
+const COLLS=['clients','staff','vehicles','days'];
+const LS_KEY='sogei-data-v1';
+const LINES_PER_PAGE=32;
+
+const S={clients:{},staff:{},vehicles:{},days:{}};
+let db=null, mode='loading', downloads=null;
+const ui={view:'home',date:todayStr(),month:todayStr().slice(0,7),sheetVid:null,sheetType:'pick',
+  editClient:null,arm:null,day:null,dayDirty:false,addName:'',restore:null,preview:null,busy:false};
+
+/* ---------- 汎用 ---------- */
+function pad(n){return String(n).padStart(2,'0')}
+function todayStr(){const d=new Date();return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())}
+function parseD(s){const [y,m,d]=s.split('-').map(Number);return new Date(y,m-1,d)}
+function fmtD(d){return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())}
+function addDays(s,n){const d=parseD(s);d.setDate(d.getDate()+n);return fmtD(d)}
+function wdKey(s){return WD[parseD(s).getDay()]}
+function wdJ(s){return WDJ[parseD(s).getDay()]}
+function longDate(s){const d=parseD(s);return d.getFullYear()+'年'+(d.getMonth()+1)+'月'+d.getDate()+'日（'+WDJ[d.getDay()]+'）'}
+function shortDate(s){const d=parseD(s);return (d.getMonth()+1)+'/'+d.getDate()+'（'+WDJ[d.getDay()]+'）'}
+function t(s){if(!s)return '';const [h,m]=s.split(':');return Number(h)+':'+m}
+function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function clone(x){return JSON.parse(JSON.stringify(x??null))}
+function uid(p){return p+Date.now().toString(36)+Math.random().toString(36).slice(2,6)}
+function toast(msg){const el=document.getElementById('toast');el.textContent=msg;el.hidden=false;clearTimeout(toast.t);toast.t=setTimeout(()=>el.hidden=true,2800)}
+function monthLabel(ym){const [y,m]=ym.split('-').map(Number);return y+'年'+m+'月'}
+
+/* ---------- 保存 ---------- */
+const queues={};
+function persistLocal(){if(mode!=='local')return;try{localStorage.setItem(LS_KEY,JSON.stringify(S))}catch(e){}}
+function put(c,id,data){
+  S[c]={...S[c],[id]:data};
+  if(mode==='shared'){
+    const k=c+'/'+id;
+    queues[k]=(queues[k]||Promise.resolve()).then(()=>db.collection(c).doc(id).set(data)).catch(dbErr);
+    return queues[k];
+  }
+  persistLocal();return Promise.resolve();
+}
+function del(c,id){
+  const o={...S[c]};delete o[id];S[c]=o;
+  if(mode==='shared'){const k=c+'/'+id;queues[k]=(queues[k]||Promise.resolve()).then(()=>db.collection(c).doc(id).delete()).catch(dbErr)}
+  else persistLocal();
+}
+function dbErr(e){
+  const m={quota_exceeded:'保存容量の上限に達しました。古い送迎表を削除してください。',
+    invalid_argument:'このアカウントには編集権限がありません。共有設定で「投稿者」以上が必要です。',
+    resource_exhausted:'操作が集中しています。少し待ってからやり直してください。'};
+  toast(m[e&&e.code]||'保存できませんでした。通信状態を確認してください。');
+}
+async function initStore(){
+  const use=window.claude&&window.claude.use?n=>window.claude.use(n).catch(()=>null):()=>Promise.resolve(null);
+  [db,downloads]=await Promise.all([use('db'),use('downloads')]);
+  if(db){
+    mode='shared';
+    COLLS.forEach(c=>{
+      db.collection(c).onSnapshot(snap=>{const o={};snap.docs.forEach(d=>o[d.id]=d.data());S[c]=o;scheduleRender()},
+        ()=>toast('共有データとの接続が切れました。ページを再読み込みしてください。'));
+    });
+  }else{
+    mode='local';
+    try{const raw=localStorage.getItem(LS_KEY);if(raw){const o=JSON.parse(raw);COLLS.forEach(c=>S[c]=o[c]||{})}}catch(e){}
+  }
+  render();
+}
+let pendingRender=false;
+function scheduleRender(){
+  const a=document.activeElement;
+  if(a&&document.getElementById('main').contains(a)&&/INPUT|SELECT/.test(a.tagName)){pendingRender=true;return}
+  render();
+}
+document.addEventListener('focusout',()=>{if(pendingRender)setTimeout(()=>{if(pendingRender){pendingRender=false;scheduleRender()}},0)});
+
+/* ---------- 参照 ---------- */
+function vehicles(){
+  const v=Object.entries(S.vehicles).map(([id,x])=>({id,...x}));
+  if(!v.length)return [{id:'v1',name:'車両1',order:1,driver:'',helper:''},{id:'v2',name:'車両2',order:2,driver:'',helper:''}];
+  return v.sort((a,b)=>(a.order||0)-(b.order||0));
+}
+function firstVid(){return vehicles()[0].id}
+function vname(id){const v=vehicles().find(x=>x.id===id);return v?v.name:'未割当'}
+function clients(){return Object.entries(S.clients).map(([id,x])=>({id,...x})).sort((a,b)=>(a.name||'').localeCompare(b.name||'','ja'))}
+function staff(){return Object.entries(S.staff).map(([id,x])=>({id,...x})).sort((a,b)=>(a.name||'').localeCompare(b.name||'','ja'))}
+function staffFor(role){
+  if(role==='driver')return driverSlots().filter(s=>s&&s.name&&s.active!==false);
+  return staff().filter(s=>s.role!=='driver'&&s.active!==false);
+}
+function clientVid(c){const v=c.vid||c.pickVid;return vehicles().some(x=>x.id===v)?v:firstVid()}
+/* 曜日の設定を読む（旧形式のデータも読めるようにする） */
+function sched(c,wd){
+  const s=(c.schedule||{})[wd]||{};
+  const leg=k=>{const v=s[k];
+    if(v&&typeof v==='object')return {on:!!v.on,dep:v.dep||'',arr:v.arr||''};
+    if(typeof v==='string')return {on:!!s.on&&!!v,dep:'',arr:v};
+    return {on:false,dep:'',arr:''}};
+  return {pick:leg('pick'),drop:leg('drop')};
+}
+function scheduledOn(c,wd){const s=sched(c,wd);return s.pick.on||s.drop.on}
+/* 臨時のとき：その曜日に設定がなければ、最初に設定がある曜日の時間を使う */
+function fallbackLeg(c,wd,k){
+  const s=sched(c,wd)[k];if(s.on)return s;
+  for(const w of WORK){const x=sched(c,w)[k];if(x.on)return x}
+  return {on:false,dep:'',arr:''};
+}
+
+/* ---------- 当日データ ---------- */
+function normLeg(L,vid){L=L||{};if(L.time&&!L.arr)L.arr=L.time;delete L.time;return {on:!!L.on,dep:L.dep||'',arr:L.arr||'',vid:L.vid||vid,note:L.note||''}}
+function normalizeDay(d){
+  d.trips=d.trips||{};
+  vehicles().forEach(v=>{d.trips[v.id]=d.trips[v.id]||{};TYPES.forEach(([k])=>{const o=d.trips[v.id][k]||{};d.trips[v.id][k]={driver:o.driver??v.driver??'',helper:o.helper??v.helper??''}})});
+  d.riders=(d.riders||[]).map(r=>{const fv=firstVid();r.pick=normLeg(r.pick,fv);r.drop=normLeg(r.drop,fv);
+    if(r.note&&!r.pick.note&&!r.drop.note){r.pick.note=r.note;r.drop.note=r.note}delete r.note;return r});
+  return d;
+}
+function buildDay(date){return normalizeDay({date,trips:{},riders:[]})}
+function ensureDay(){
+  const saved=S.days[ui.date];
+  // 手を加えていない間は、保存済みの内容（なければ空の表）を表示し直す
+  if(!ui.day||ui.day.date!==ui.date||!ui.dayDirty){ui.day=saved?normalizeDay(clone(saved)):buildDay(ui.date);ui.dayDirty=false}
+}
+function makeRider(c,date,legs){
+  const wd=wdKey(date),vid=clientVid(c),extra=!scheduledOn(c,wd);
+  const r={key:uid('r'),cid:c.id,name:c.name,extra};
+  TYPES.forEach(([k])=>{const s=extra?fallbackLeg(c,wd,k):sched(c,wd)[k];
+    r[k]={on:legs.includes(k),dep:s.dep,arr:s.arr,vid,note:c.note||''}});
+  return r;
+}
+function legRiders(day,vid,type){
+  return (day.riders||[]).filter(r=>r[type].on&&r[type].vid===vid)
+    .sort((a,b)=>((a[type].dep||a[type].arr||'99')).localeCompare(b[type].dep||b[type].arr||'99'));
+}
+function findR(k){return ui.day.riders.find(r=>r.key===k)}
+function riderOf(cid){return ui.day.riders.find(r=>r.cid===cid)}
+function pruneRider(r){if(!r.pick.on&&!r.drop.on)ui.day.riders=ui.day.riders.filter(x=>x!==r)}
+
+/* ---------- 描画 ---------- */
+function render(){
+  pendingRender=false;
+  const m=document.getElementById('mode');
+  m.className='mode '+mode;
+  m.textContent=mode==='shared'?'共有データに保存':mode==='local'?'この端末のみに保存':'読み込み中';
+  document.querySelectorAll('#nav a').forEach(a=>a.setAttribute('aria-current',a.getAttribute('href')==='#'+ui.view?'page':'false'));
+  const sy=window.scrollY;
+  document.getElementById('main').innerHTML=({home:vHome,day:vDay,sheet:vSheet,clients:vClients,staff:vStaff}[ui.view]||vHome)();
+  document.getElementById('savebar').innerHTML=ui.view==='day'?saveBar():'';
+  window.scrollTo(0,sy);
+}
+
+function counts(d){return {p:d.riders.filter(r=>r.pick&&r.pick.on).length,q:d.riders.filter(r=>r.drop&&r.drop.on).length}}
+function vHome(){
+  const td=todayStr(),raw=S.days[td];
+  let st='<span class="state dirty">本日の送迎表はまだ作成されていません</span>';
+  if(raw){const c=counts(normalizeDay(clone(raw)));st=`<span class="state ok">本日の送迎表は作成済み</span>　<span class="tag pick">お迎え ${c.p}名</span> <span class="tag drop">お送り ${c.q}名</span>`}
+  return `<div class="stack">
+  <div><p class="sub">今日</p><div class="today num">${longDate(td)}</div><p style="margin:6px 0 0">${st}</p></div>
+  <div class="tiles">
+    <a class="tile main" href="#day" data-act="goday" data-date="${td}"><b>毎日の送迎入力</b><span>利用者の名前を押して、今日の送迎表を作ります</span></a>
+    <a class="tile" href="#sheet"><b>送迎表・印刷</b><span>元のExcelと同じ形の月間送迎表、Excel・PDF出力</span></a>
+    <a class="tile" href="#clients"><b>利用者の登録</b><span>登録 ${clients().length}名・曜日ごとの出発／到着時間</span></a>
+    <a class="tile" href="#staff"><b>職員・車両</b><span>運転手 ${driverSlots().filter(Boolean).length}名・補助員 ${staff().filter(x=>x.role!=='driver').length}名・車両 ${vehicles().length}台</span></a>
+  </div>
+  <div class="panel soft stack">
+    <h2>バックアップ</h2>
+    <p class="note" style="margin:0">利用者の登録内容と、これまでに作成した送迎表をまとめて1つのファイルに保存します。月に一度の保存をおすすめします。</p>
+    <div class="row">
+      <button class="btn" data-act="backup">バックアップを保存</button>
+      <label class="btn" for="restoreFile">バックアップから復元</label>
+      <input id="restoreFile" type="file" accept=".json,application/json" hidden data-ch="restore">
+    </div>
+    ${ui.restore?`<div class="panel" style="border-color:var(--danger)"><p style="margin-top:0">「${esc(ui.restore.name)}」の内容で上書きします（利用者 ${Object.keys(ui.restore.data.clients||{}).length}名、送迎表 ${Object.keys(ui.restore.data.days||{}).length}日分）。</p>
+      <div class="row"><button class="btn danger armed" data-act="restore-go">上書きして復元</button><button class="btn" data-act="restore-cancel">やめる</button></div></div>`:''}
+    <p class="note" style="margin:0">${mode==='shared'?'データはこのページを共有した職員の間で共通です。共有設定で「閲覧者」にした人には利用者の情報は表示されません。':'この表示では共有データが使えないため、この端末のブラウザにのみ保存しています。'}</p>
+  </div></div>`;
+}
+
+/* ----- 毎日の送迎入力 ----- */
+function staffSelect(role,val,attrs){
+  const list=staffFor(role),names=list.map(s=>s.name);
+  let o=`<option value="">${role==='helper'?'なし':'未選択'}</option>`+list.map(s=>`<option ${s.name===val?'selected':''}>${esc(s.name)}</option>`).join('');
+  if(val&&!names.includes(val))o+=`<option selected>${esc(val)}</option>`;
+  return `<select ${attrs}>${o}</select>`;
+}
+function vehSelect(sel,attrs){return `<select ${attrs}>${vehicles().map(v=>`<option value="${v.id}" ${v.id===sel?'selected':''}>${esc(v.name)}</option>`).join('')}</select>`}
+function timeRange(L){return L.dep||L.arr?`${t(L.dep)||'--:--'}→${t(L.arr)||'--:--'}`:'時間未設定'}
+function clientCard(c){
+  const wd=wdKey(ui.date),r=riderOf(c.id),s=sched(c,wd),sel=!!(r&&(r.pick.on||r.drop.on));
+  const legs=TYPES.map(([k,l])=>{
+    const L=r?r[k]:(scheduledOn(c,wd)?s[k]:fallbackLeg(c,wd,k));
+    const on=!!(r&&r[k].on), na=!r&&scheduledOn(c,wd)&&!s[k].on;
+    return `<button class="chip ${k} ${on?'on':''} ${na?'na':''}" data-act="chip" data-cid="${c.id}" data-t="${k}" aria-pressed="${on}"><b>${on?'✓ ':''}${l}</b><span>${na?'設定なし':timeRange(L)}</span></button>`}).join('');
+  const vids=r?[...new Set(TYPES.filter(([k])=>r[k].on).map(([k])=>r[k].vid))]:[clientVid(c)];
+  return `<div class="card ${sel?'sel':''}">
+    <button class="nm" data-act="pickname" data-cid="${c.id}" aria-pressed="${sel}"><span class="ck">${sel?'✓':''}</span>${esc(c.name)}</button>
+    <div class="vh">${vids.map(vname).map(esc).join('・')}${c.note?`　${esc(c.note)}`:''}</div>
+    <div class="legs">${legs}</div></div>`;
+}
+function tripTable(d,v,k){
+  const rs=legRiders(d,v.id,k);
+  if(!rs.length)return `<p class="note" style="margin:0">まだ選ばれていません</p>`;
+  return `<div class="scroll"><table class="trip"><thead><tr><th>利用者</th><th>出発時間</th><th>到着時間</th><th>車両</th><th>備考</th><th></th></tr></thead><tbody>
+  ${rs.map(r=>{const L=r[k],a=f=>`data-in="leg" data-k="${r.key}" data-t="${k}" data-f="${f}"`;
+    return `<tr><td class="n">${esc(r.name)}${r.extra?' <span class="tag extra">臨時</span>':''}</td>
+    <td><input type="time" value="${L.dep}" ${a('dep')} aria-label="${esc(r.name)} ${TL[k]}の出発時間"></td>
+    <td><input type="time" value="${L.arr}" ${a('arr')} aria-label="${esc(r.name)} ${TL[k]}の到着時間"></td>
+    <td>${vehSelect(L.vid,`data-ch="legveh" data-k="${r.key}" data-t="${k}" aria-label="車両"`)}</td>
+    <td><input type="text" value="${esc(L.note)}" ${a('note')} aria-label="備考"></td>
+    <td><button class="x" data-act="legoff" data-k="${r.key}" data-t="${k}" aria-label="${esc(r.name)}の${TL[k]}を外す" title="外す">×</button></td></tr>`}).join('')}
+  </tbody></table></div>`;
+}
+function vDay(){
+  ensureDay();
+  const d=ui.day,wd=wdKey(ui.date),cs=clients();
+  const today=cs.filter(c=>scheduledOn(c,wd)),others=cs.filter(c=>!scheduledOn(c,wd));
+  const free=d.riders.filter(r=>!r.cid);
+  const c=counts(d);
+  return `<div class="stack">
+  <div><h1>毎日の送迎入力</h1><p class="sub">送迎する利用者の名前を押すと、登録済みの時間と車両で送迎表に入ります。もう一度押すと外れます。</p></div>
+  <div class="datebar">
+    <button class="btn" data-act="dshift" data-n="-1">◀ 前日</button>
+    <input type="date" id="dayDate" value="${ui.date}" data-ch="date" aria-label="日付">
+    <span class="wday">${wdJ(ui.date)}曜日</span>
+    <button class="btn" data-act="dshift" data-n="1">翌日 ▶</button>
+    <button class="btn small" data-act="dtoday">今日</button>
+    <span class="spacer"></span>
+    <span class="tag pick" style="font-size:15px">お迎え ${c.p}名</span><span class="tag drop" style="font-size:15px">お送り ${c.q}名</span>
+  </div>
+  <section class="stack">
+    <div class="row"><h2>${wdJ(ui.date)}曜日に送迎のある利用者（${today.length}名）</h2><span class="spacer"></span>
+      ${today.length?`<button class="btn small" data-act="allon">全員を選ぶ</button>`:''}<button class="btn small" data-act="alloff">すべて外す</button></div>
+    ${today.length?`<div class="cards">${today.map(clientCard).join('')}</div>`:`<div class="empty">${wd==='sun'?'日曜日は送迎の曜日に含まれていません。':'この曜日に送迎を登録している利用者はいません。'}当日だけ必要な方は下から選んでください。</div>`}
+    <p class="note" style="margin:0">名前を押すと、その曜日に登録されたお迎え・お送りの両方が入ります。片方だけのときは、下の「お迎え」「お送り」を押してください。</p>
+  </section>
+  ${others.length?`<section class="stack"><h2>当日だけ追加する利用者（${others.length}名）</h2>
+    <div class="cards">${others.map(clientCard).join('')}</div></section>`:''}
+  <section class="panel soft row">
+    <b>登録していない方を追加</b>
+    <input type="text" id="addName" placeholder="名前を入力" value="${esc(ui.addName)}">
+    <button class="btn" data-act="addfree" data-t="pick">お迎えに追加</button>
+    <button class="btn" data-act="addfree" data-t="drop">お送りに追加</button>
+    ${free.length?`<span class="note">追加済み：${free.map(r=>esc(r.name)).join('、')}</span>`:''}
+  </section>
+  <section class="stack"><h2>${shortDate(ui.date)} の送迎表（車両別）</h2>
+    <p class="note" style="margin:0">時間・車両・備考・運転手・補助員はこの日だけ変更できます。利用者の登録内容は変わりません。</p>
+    <div class="vgrid">${vehicles().map(v=>`<div class="vcard"><h3>${esc(v.name)}</h3>
+      ${TYPES.map(([k,l])=>`<div class="legbox"><div class="who"><span class="tag ${k}">${l}</span>
+        <label class="f">運転手${staffSelect('driver',d.trips[v.id][k].driver,`data-in="trip" data-vid="${v.id}" data-t="${k}" data-f="driver"`)}</label>
+        <label class="f">補助員${staffSelect('helper',d.trips[v.id][k].helper,`data-in="trip" data-vid="${v.id}" data-t="${k}" data-f="helper"`)}</label></div>
+        ${tripTable(d,v,k)}</div>`).join('')}
+    </div>`).join('')}</div>
+  </section></div>`;
+}
+function saveBar(){
+  const saved=!!S.days[ui.date],dirty=ui.dayDirty||!saved;
+  return `<div class="savebar"><div class="wrap">
+    <span id="dstate" class="state ${dirty?'dirty':'ok'}">${ui.dayDirty?'未保存の変更があります':saved?'作成済み':'まだ作成されていません'}</span>
+    <span class="note num">${shortDate(ui.date)}</span><span class="spacer"></span>
+    <button class="btn" data-act="tosheet">送迎表を見る</button>
+    <button class="btn primary big" data-act="saveday">送迎表を作成</button>
+  </div></div>`;
+}
+function markDirty(){ui.dayDirty=true;const el=document.getElementById('dstate');if(el){el.className='state dirty';el.textContent='未保存の変更があります'}}
+
+/* ----- 送迎表（元のExcel「送迎管理（白）」と同じ構成） ----- */
+/* 列：A日付 B運転手１ C補助員 D利用者 E発時間 F着時間 G備考 ｜ H日付 I運転手１ J補助員 K利用者 L発時間 M着時間 N備考
+   1日分の行数 ＝ お迎え・お送りの多い方の人数。日付はA列の1行目だけに入る（元の表と同じ）。 */
+const XL_W=[5.625,9,9,9,5.75,5.75,18.375,5.625,9,9,9,5.75,5.75,18.375];
+function vnum(v){const m=(v.name||'').match(/\d+/);return m?m[0]:String(vehicles().findIndex(x=>x.id===v.id)+1)}
+function xlTitle(v){return `車　両　送　迎　記　録　表　 ( 車両　No.${vnum(v)}　　）`}
+function excelGroups(ym,vid){
+  const out=[];
+  Object.keys(S.days).filter(k=>k.startsWith(ym+'-')).sort().forEach(date=>{
+    const d=normalizeDay(clone(S.days[date]));if(!d.trips[vid])return;
+    const L=k=>legRiders(d,vid,k).map(r=>({name:r.name,dep:r[k].dep,arr:r[k].arr,note:r[k].note}));
+    const g={date,pick:L('pick'),drop:L('drop'),pd:d.trips[vid].pick.driver,ph:d.trips[vid].pick.helper,dd:d.trips[vid].drop.driver,dh:d.trips[vid].drop.helper};
+    if(g.pick.length||g.drop.length)out.push(g);
+  });
+  return out;
+}
+function md(date){const d=parseD(date);return (d.getMonth()+1)+'/'+d.getDate()}
+function xlHead(v){
+  return `<tr class="r1"><td colspan="14" class="ttl">${esc(xlTitle(v))}</td></tr><tr class="r2"><td colspan="14"></td></tr>
+  <tr class="r3"><td colspan="7" class="hp">お　迎　え</td><td colspan="7" class="hd">お　送　り</td></tr>
+  <tr class="r4">${['日付','運転手１','補助員','利用者','発時間','着時間','備　　考','日付','運転手１','補助員','利用者','発時間','着時間','備　　考'].map(h=>`<td class="th">${h}</td>`).join('')}</tr>`;
+}
+function xlRows(groups){
+  return groups.map(g=>{const n=Math.max(g.pick.length,g.drop.length);let h='';
+    for(let i=0;i<n;i++){const p=g.pick[i],q=g.drop[i];
+      const cls=[i===0?'gf':'',i===n-1?'gl':''].join(' ');
+      h+=`<tr class="${cls}"><td class="a">${i===0?md(g.date):''}</td><td>${p?esc(g.pd):''}</td><td>${p?esc(g.ph):''}</td><td>${p?esc(p.name):''}</td><td>${p?t(p.dep):''}</td><td>${p?t(p.arr):''}</td><td class="l">${p?esc(p.note):''}</td>
+      <td></td><td>${q?esc(g.dd):''}</td><td>${q?esc(g.dh):''}</td><td>${q?esc(q.name):''}</td><td>${q?t(q.dep):''}</td><td>${q?t(q.arr):''}</td><td class="l n">${q?esc(q.note):''}</td></tr>`}
+    return h}).join('');
+}
+function xlTail(){ // 元の表と同じく、最後の日の下に空欄の行を残す
+  const blank=c=>`<tr class="${c}">${XL_W.map((_,i)=>`<td class="${i===6||i===13?'l':''}"></td>`).join('')}</tr>`;
+  return blank('t0')+blank('')+blank('')+blank('')+blank('')+blank('pad')+blank('pad')+blank('pad')+blank('pad')+blank('pad');
+}
+function xlTable(v,groups,head=true,tail=true){
+  return `<table class="xlt"><colgroup>${XL_W.map(w=>`<col style="width:${(w/XL_W.reduce((a,b)=>a+b,0)*100).toFixed(3)}%">`).join('')}</colgroup>
+  <tbody>${head?xlHead(v):''}${xlRows(groups)}${tail?xlTail():''}</tbody></table>`;
+}
+function vSheet(){
+  const vs=vehicles();
+  if(!ui.sheetVid||!vs.some(v=>v.id===ui.sheetVid))ui.sheetVid=vs[0].id;
+  const v=vs.find(x=>x.id===ui.sheetVid),groups=excelGroups(ui.month,v.id);
+  return `<div class="stack">
+  <div><h1>送迎表・印刷</h1><p class="sub">「送迎管理（白）」のExcelと同じ形で表示します。左がお迎え、右がお送りです。日付を直すときは「毎日の送迎入力」で日付を選んでください。</p></div>
+  <div class="row">
+    <button class="btn" data-act="mshift" data-n="-1">◀ 前月</button>
+    <input type="month" id="sheetMonth" value="${ui.month}" data-ch="month" aria-label="月">
+    <button class="btn" data-act="mshift" data-n="1">翌月 ▶</button>
+    <span class="spacer"></span>
+    <div class="tabs" role="group" aria-label="車両">${vs.map(x=>`<button data-act="svid" data-v="${x.id}" aria-pressed="${x.id===v.id}">${esc(x.name)}</button>`).join('')}</div>
+  </div>
+  <section class="panel soft stack" id="out">
+    <div class="row">
+      <button class="btn primary" data-act="xlsx">Excelで保存（${esc(v.name)}）</button>
+      <button class="btn" data-act="htmlout">HTMLで保存（${esc(v.name)}）</button>
+      <button class="btn" data-act="preview" data-scope="one">印刷プレビュー（${esc(v.name)}）</button>
+      <button class="btn" data-act="preview" data-scope="all">印刷プレビュー（全車両）</button>
+    </div>
+    <p class="note" style="margin:0">Excelは、元の「送迎管理（白）」ファイルの罫線・色・列幅・ページ設定をそのまま使い、送迎の内容だけを入れ替えて作ります。車両ごとに1ファイルです。</p>
+    ${ui.preview?previewBlock():''}
+  </section>
+  ${groups.length?'':`<div class="empty">${monthLabel(ui.month)}の${esc(v.name)}には、作成済みの送迎表がありません。</div>`}
+  <div class="scroll paperbg"><div class="xlscreen">${xlTable(v,groups)}</div></div>
+  <p class="note" style="margin:0">${groups.length}日分　${groups.reduce((a,g)=>a+Math.max(g.pick.length,g.drop.length),0)}行</p>
+  </div>`;
+}
+
+/* ----- 帳票（プレビュー・PDF・印刷用ファイル）。A4横・元のExcelの余白に合わせる ----- */
+const ROW_MM=5.82,ROWL_MM=6.09,HEAD_MM=21.2,BODY_MM=176.2;
+function paperPages(scope){
+  const vs=scope==='one'?[vehicles().find(v=>v.id===ui.sheetVid)]:vehicles(),out=[];
+  vs.forEach(v=>{
+    const groups=excelGroups(ui.month,v.id),pages=[[]];let used=HEAD_MM;
+    groups.forEach(g=>{const n=Math.max(g.pick.length,g.drop.length),h=(n-1)*ROW_MM+ROWL_MM;
+      if(used+h>BODY_MM&&pages[pages.length-1].length){pages.push([]);used=0}
+      pages[pages.length-1].push(g);used+=h});
+    const tailFits=used+10*ROW_MM<=BODY_MM;
+    pages.forEach((p,i)=>out.push(`<div class="pg">${xlTable(v,p,i===0,i===pages.length-1&&tailFits)}</div>`));
+  });
+  return out;
+}
+function previewBlock(){
+  const pages=paperPages(ui.preview);
+  return `<div class="stack">
+    <div class="row"><b>印刷プレビュー（A4横・${pages.length}枚）</b><span class="spacer"></span>
+      <button class="btn primary" data-act="pdf" ${ui.busy?'disabled':''}>${ui.busy?'PDFを作成中…':'PDFで保存'}</button>
+      <button class="btn" data-act="printfile">HTMLで保存</button>
+      <button class="btn" data-act="closepreview">閉じる</button></div>
+    <p class="note" style="margin:0">このページから直接は印刷できません。PDFかHTMLで保存して印刷してください。HTMLはブラウザで開くと「印刷する」ボタンから印刷できます。</p>
+    <div class="desk"><div class="papers" id="papers">${pages.join('')}</div></div></div>`;
+}
+function printHTML(scope){
+  const css=[...document.styleSheets].flatMap(sh=>{try{return [...sh.cssRules].map(r=>r.cssText)}catch(e){return []}}).filter(x=>x.startsWith('.pg')||x.startsWith('.xlt')).join('\n');
+  return `<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>送迎表 ${monthLabel(ui.month)}</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&display=swap">
+<style>
+@page{size:A4 landscape;margin:0}
+*{box-sizing:border-box}
+body{margin:0;background:#ddd}
+.tool{padding:12px 16px;background:#eef4f2;border-bottom:1px solid #9bb;font:14px sans-serif;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.tool button{font:inherit;font-weight:700;padding:8px 18px;border:1px solid #16695a;background:#16695a;color:#fff;border-radius:6px;cursor:pointer}
+.papers{display:flex;flex-direction:column;align-items:center;gap:16px;padding:16px}
+${css}
+@media print{body{background:#fff}.tool{display:none}.papers{padding:0;gap:0}.pg{box-shadow:none;break-after:page}.pg:last-child{break-after:auto}}
+</style></head><body>
+<div class="tool"><button onclick="window.print()">印刷する</button><span>A4横で印刷されます。PDFにする場合は、印刷画面の送信先で「PDFに保存」を選んでください。</span></div>
+<div class="papers">${paperPages(scope).join('')}</div></body></html>`;
+}
+async function saveFile(filename,data){
+  if(!downloads){ // HTMLファイルとして直接開いているとき：ブラウザの通常のダウンロードで保存
+    try{const url=URL.createObjectURL(data instanceof Blob?data:new Blob([data],{type:'text/plain;charset=utf-8'}));
+      const a=document.createElement('a');a.href=url;a.download=filename;document.body.appendChild(a);a.click();a.remove();
+      setTimeout(()=>URL.revokeObjectURL(url),4000);toast('保存しました');return true}
+    catch(e){toast('保存できませんでした');return false}}
+  try{await downloads.save({filename,data});toast('保存しました');return true}
+  catch(e){if(e&&e.code==='declined')return false;if(e&&e.code==='rate_limited'){toast('保存の確認画面がすでに開いています');return false}toast('保存できませんでした');return false}
+}
+function outName(ext){return `送迎表_${ui.month}${ui.preview==='one'?'_'+vname(ui.sheetVid):''}.${ext}`}
+async function exportPdf(){
+  if(!window.html2canvas||!window.jspdf){toast('PDF作成の部品を読み込めませんでした。ページを再読み込みしてください。');return}
+  if(!document.querySelector('#papers .pg'))return;
+  ui.busy=true;render();
+  try{
+    if(document.fonts&&document.fonts.ready)await document.fonts.ready;
+    const pdf=new window.jspdf.jsPDF({orientation:'landscape',unit:'mm',format:'a4',compress:true});
+    const els=[...document.querySelectorAll('#papers .pg')];
+    for(let i=0;i<els.length;i++){
+      const cv=await window.html2canvas(els[i],{scale:2,backgroundColor:'#ffffff',logging:false});
+      if(i>0)pdf.addPage('a4','landscape');
+      pdf.addImage(cv.toDataURL('image/jpeg',0.92),'JPEG',0,0,297,210);
+    }
+    const buf=pdf.output('arraybuffer');
+    ui.busy=false;render();
+    await saveFile(outName('pdf'),new Blob([buf]));
+  }catch(e){ui.busy=false;render();toast('PDFを作成できませんでした。Excelで保存して印刷してください。')}
+}
+
+/* ----- Excel出力：元ファイルをテンプレートとして使い、5行目以降だけを差し替える ----- */
+const XL={ // 元ファイルの書式番号（1日の1行目／途中／最終行／表の下の空欄）
+  first:[8,9,9,9,10,10,11,9,9,9,9,19,19,12], mid:[22,3,3,3,7,7,5,20,3,3,3,4,4,18],
+  last:[21,14,14,14,15,15,17,14,14,14,14,23,23,16], after:[33,28,28,29,30,30,31,33,28,28,29,32,32,31],
+  plain:[20,3,3,6,7,7,5,20,3,3,6,4,4,5], pad:Array(14).fill(24)};
+const XCOLS='ABCDEFGHIJKLMN'.split('');
+function b64u8(b){const s=atob(b),u=new Uint8Array(s.length);for(let i=0;i<s.length;i++)u[i]=s.charCodeAt(i);return u}
+function xesc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+function xSerial(date){const [y,m,d]=date.split('-').map(Number);return (Date.UTC(y,m-1,d)-Date.UTC(1899,11,30))/864e5}
+function xTime(s){if(!s)return null;const [h,m]=s.split(':').map(Number);return +((h*60+m)/1440).toFixed(15)}
+function xCell(col,r,s,v){const ref=col+r;
+  if(v==null||v==='')return `<c r="${ref}" s="${s}"/>`;
+  if(typeof v==='number')return `<c r="${ref}" s="${s}"><v>${v}</v></c>`;
+  return `<c r="${ref}" s="${s}" t="inlineStr"><is><t xml:space="preserve">${xesc(v)}</t></is></c>`}
+function xRow(r,sty,vals,thick){return `<row r="${r}" spans="1:14"${thick?' ht="17.25" thickBot="1" x14ac:dyDescent="0.45"':' x14ac:dyDescent="0.4"'}>${XCOLS.map((c,i)=>xCell(c,r,sty[i],vals[i])).join('')}</row>`}
+/* 1行だけの日用：1行目の書式に下の太線を加えた書式を追加する（元の書式は変えない） */
+function xSingleStyles(styles){
+  const bm=styles.match(/<borders count="\d+">([\s\S]*?)<\/borders>/),xm=styles.match(/<cellXfs count="\d+">([\s\S]*?)<\/cellXfs>/);
+  const borders=bm[1].match(/<border>[\s\S]*?<\/border>|<border\/>/g),xfs=xm[1].match(/<xf [^>]*\/>|<xf [^>]*>[\s\S]*?<\/xf>/g);
+  const nb=[],nx=[],map={};
+  XL.first.forEach(sid=>{if(map[sid]!=null)return;const x=xfs[sid],bid=+x.match(/borderId="(\d+)"/)[1];
+    nb.push(borders[bid].replace(/<bottom style="thin">/,'<bottom style="medium">').replace(/<bottom\/>/,'<bottom style="medium"><color indexed="64"/></bottom>'));
+    nx.push(x.replace(/borderId="\d+"/,`borderId="${borders.length+nb.length-1}"`));map[sid]=xfs.length+nx.length-1});
+  styles=styles.replace(bm[0],()=>`<borders count="${borders.length+nb.length}">${bm[1]}${nb.join('')}</borders>`)
+               .replace(xm[0],()=>`<cellXfs count="${xfs.length+nx.length}">${xm[1]}${nx.join('')}</cellXfs>`);
+  return {styles,single:XL.first.map(s=>map[s])};
+}
+async function buildXlsx(vid){
+  const v=vehicles().find(x=>x.id===vid),[,mm]=ui.month.split('-').map(Number);
+  const zip=await JSZip.loadAsync(b64u8(document.getElementById('tpl').textContent.trim()));
+  let sh=await zip.file('xl/worksheets/sheet1.xml').async('string');
+  const {styles,single}=xSingleStyles(await zip.file('xl/styles.xml').async('string'));
+  // 見出し（1〜4行目）は元のまま。タイトルの車両番号だけ差し替える
+  const head=[1,2,3,4].map(n=>sh.match(new RegExp(`<row r="${n}"[^>]*?(?:/>|>[\\s\\S]*?</row>)`))[0]);
+  head[0]=head[0].replace(/<c r="A1"([^>]*?) t="s"><v>\d+<\/v><\/c>/,(m,a)=>`<c r="A1"${a} t="inlineStr"><is><t xml:space="preserve">${xesc(xlTitle(v))}</t></is></c>`);
+  const rows=[];let r=5;
+  excelGroups(ui.month,vid).forEach(g=>{const n=Math.max(g.pick.length,g.drop.length);
+    for(let i=0;i<n;i++){const p=g.pick[i],q=g.drop[i];
+      const vals=[i===0?xSerial(g.date):null,p?g.pd:null,p?g.ph:null,p?p.name:null,p?xTime(p.dep):null,p?xTime(p.arr):null,p?p.note:null,
+                  null,q?g.dd:null,q?g.dh:null,q?q.name:null,q?xTime(q.dep):null,q?xTime(q.arr):null,q?q.note:null];
+      rows.push(xRow(r++,n===1?single:i===0?XL.first:i===n-1?XL.last:XL.mid,vals,i===n-1))}});
+  rows.push(xRow(r++,XL.after,[],false));
+  for(let i=0;i<4;i++)rows.push(xRow(r++,XL.plain,[],false));
+  for(let i=0;i<5;i++)rows.push(xRow(r++,XL.pad,[],false));
+  sh=sh.replace(/<sheetData>[\s\S]*<\/sheetData>/,()=>`<sheetData>${head.join('')}${rows.join('')}</sheetData>`)
+       .replace(/<dimension ref="[^"]*"\/>/,`<dimension ref="A1:N${r-1}"/>`)
+       .replace(/ topLeftCell="[^"]*"/,'').replace(/<selection [^>]*\/>/,'<selection activeCell="A5" sqref="A5"/>');
+  zip.file('xl/worksheets/sheet1.xml',sh);
+  zip.file('xl/styles.xml',styles);
+  let wbx=await zip.file('xl/workbook.xml').async('string');
+  wbx=wbx.replace(/<mc:AlternateContent[\s\S]*?<\/mc:AlternateContent>/,'').replace(/<sheet name="[^"]*"/,`<sheet name="${mm}月"`);
+  zip.file('xl/workbook.xml',wbx);
+  let app=await zip.file('docProps/app.xml').async('string');
+  app=app.replace(/(<TitlesOfParts>[\s\S]*?<vt:lpstr>)[^<]*(<\/vt:lpstr>)/,(m,a,b)=>a+mm+'月'+b);
+  zip.file('docProps/app.xml',app);
+  return zip.generateAsync({type:'blob',compression:'DEFLATE'});
+}
+async function exportXlsx(){
+  if(!window.JSZip){toast('Excel出力の部品を読み込めませんでした。ページを再読み込みしてください。');return}
+  try{const blob=await buildXlsx(ui.sheetVid);
+    const [y,m]=ui.month.split('-').map(Number);
+    await saveFile(`送迎管理（${vname(ui.sheetVid)}）${y}年${m}月.xlsx`,blob)}
+  catch(e){toast('Excelを作成できませんでした')}
+}
+
+/* ----- 利用者の登録 ----- */
+function emptyWeek(){const s={};WORK.forEach(k=>s[k]={pick:{on:false,dep:'',arr:''},drop:{on:false,dep:'',arr:''}});return s}
+function newClient(){return {id:null,name:'',note:'',vid:firstVid(),schedule:emptyWeek()}}
+function vClients(){
+  const list=clients(),e=ui.editClient;
+  const cell=(c,k)=>{const s=sched(c,k);if(!s.pick.on&&!s.drop.on)return '<td class="note">—</td>';
+    const f=L=>L.on?`${t(L.dep)||'--'}→${t(L.arr)||'--'}`:'—';
+    return `<td class="t"><span class="p">迎 ${f(s.pick)}</span><br><span class="d">送 ${f(s.drop)}</span></td>`};
+  return `<div class="stack">
+  <div class="row"><div><h1>利用者の登録</h1><p class="sub">送迎が必要な利用者だけを登録します。曜日ごとに、お迎え・お送りの出発時間と到着時間を設定します。</p></div><span class="spacer"></span>
+    <button class="btn primary" data-act="cnew">＋ 利用者を追加</button></div>
+  ${e?clientEditor(e):''}
+  ${list.length?`<div class="scroll"><table class="grid wk"><thead><tr><th>利用者名</th><th>通常の車両</th>${WORK.map(k=>`<th>${WDJ[WD.indexOf(k)]}</th>`).join('')}<th></th></tr></thead><tbody>
+    ${list.map(c=>`<tr><td><b>${esc(c.name)}</b>${c.note?`<br><small class="note">${esc(c.note)}</small>`:''}</td><td>${esc(vname(clientVid(c)))}</td>
+    ${WORK.map(k=>cell(c,k)).join('')}<td><button class="btn small" data-act="cedit" data-id="${c.id}">編集</button></td></tr>`).join('')}</tbody></table></div>
+  <p class="note" style="margin:0">表の見方：「迎」お迎え、「送」お送り。どちらも 出発時間→到着時間 です。</p>`
+  :`<div class="empty">まだ利用者が登録されていません。「＋ 利用者を追加」から登録してください。</div>`}
+  </div>`;
+}
+function clientEditor(e){
+  const tcell=(k,g,d)=>{const L=e.schedule[k][g];
+    return `<td class="${g==='pick'?'gp':'gd'} ${L.on?'':'off'}"><label class="row" style="gap:6px"><input type="checkbox" id="c_${k}_${g}_on" data-in="cs" data-d="${k}" data-g="${g}" data-f="on" ${L.on?'checked':''}> 利用</label></td>
+      <td class="${L.on?'':'off'}"><input type="time" id="c_${k}_${g}_dep" value="${L.dep}" data-in="cs" data-d="${k}" data-g="${g}" data-f="dep" aria-label="${d}曜 ${TL[g]} 出発"></td>
+      <td class="${L.on?'':'off'}"><input type="time" id="c_${k}_${g}_arr" value="${L.arr}" data-in="cs" data-d="${k}" data-g="${g}" data-f="arr" aria-label="${d}曜 ${TL[g]} 到着"></td>`};
+  return `<div class="editor">
+  <h2>${e.id?'利用者を編集':'利用者を追加'}</h2>
+  <div class="fgrid">
+    <label class="f">利用者名<input type="text" id="c_name" value="${esc(e.name)}" data-in="c" data-f="name" placeholder="例：山田 太郎"></label>
+    <label class="f">通常使用する車両${vehSelect(e.vid,'id="c_vid" data-in="c" data-f="vid"')}</label>
+    <label class="f">備考（送迎表の備考欄に入ります）<input type="text" id="c_note" value="${esc(e.note)}" data-in="c" data-f="note" placeholder="例：車いす"></label>
+  </div>
+  <div class="scroll"><table class="week"><thead>
+    <tr><th rowspan="2">曜日</th><th colspan="3" class="gp"><span class="tag pick">お迎え</span></th><th colspan="3" class="gd"><span class="tag drop">お送り</span></th></tr>
+    <tr><th class="gp"></th><th>出発時間</th><th>到着時間</th><th class="gd"></th><th>出発時間</th><th>到着時間</th></tr></thead><tbody>
+  ${WORK.map(k=>{const d=WDJ[WD.indexOf(k)];return `<tr><td class="dn">${d}</td>${tcell(k,'pick',d)}${tcell(k,'drop',d)}</tr>`}).join('')}
+  </tbody></table></div>
+  <div class="row"><button class="btn small" data-act="ccopy">月曜日の設定を火〜土曜日にコピー</button><span class="note">時間を入れると「利用」に自動でチェックが入ります。</span></div>
+  <div class="row">
+    <button class="btn primary" data-act="csave">保存</button><button class="btn" data-act="ccancel">閉じる</button><span class="spacer"></span>
+    ${e.id?`<button class="btn danger ${ui.arm==='c'+e.id?'armed':''}" data-act="cdel">${ui.arm==='c'+e.id?'本当に削除する':'この利用者を削除'}</button>`:''}
+  </div>
+  <p class="note" style="margin:0">登録内容を変えても、すでに作成した送迎表は変わりません。</p></div>`;
+}
+
+/* ----- 職員・車両 ----- */
+const MAX_DRIVERS=4;
+function vStaff(){
+  const vs=vehicles(),drv=driverSlots(),hel=staff().filter(s=>s.role!=='driver');
+  const stSel=(id,active,ch)=>`<select data-ch="${ch}" data-id="${id}" aria-label="使用状態"><option value="1" ${active?'selected':''}>有効</option><option value="0" ${active?'':'selected'}>無効</option></select>`;
+  return `<div class="stack">
+  <div><h1>職員・車両</h1><p class="sub">運転手と補助員を登録すると、送迎入力の画面で選べます。名前はいつでも直せます。</p></div>
+  <section class="panel stack"><div class="row"><h2>運転手</h2><span class="note">最大${MAX_DRIVERS}人まで登録できます。「無効」にすると選択肢から外れます。</span></div>
+    <div class="scroll"><table class="grid"><thead><tr><th style="width:3em">No.</th><th>運転手名</th><th style="width:8em">使用状態</th></tr></thead><tbody>
+    ${drv.map((s,i)=>`<tr><td class="num">${i+1}</td>
+      <td><input type="text" id="drv${i+1}" value="${esc(s?s.name:'')}" placeholder="未登録" data-ch="dname" data-slot="${i+1}" aria-label="運転手${i+1}の名前"></td>
+      <td>${s?stSel('d'+(i+1),s.active!==false,'dactive'):'<span class="note">—</span>'}</td></tr>`).join('')}
+    </tbody></table></div>
+  </section>
+  <section class="panel stack"><div class="row"><h2>補助員</h2><span class="note">人数の上限はありません。</span></div>
+    ${hel.length?`<div class="scroll"><table class="grid"><thead><tr><th>補助員名</th><th style="width:8em">使用状態</th><th style="width:7em"></th></tr></thead><tbody>
+    ${hel.map(s=>`<tr><td><input type="text" value="${esc(s.name)}" data-ch="hname" data-id="${s.id}" aria-label="補助員の名前"></td>
+      <td>${stSel(s.id,s.active!==false,'hactive')}</td>
+      <td><button class="btn small danger ${ui.arm==='s'+s.id?'armed':''}" data-act="sdel" data-id="${s.id}">${ui.arm==='s'+s.id?'削除する':'削除'}</button></td></tr>`).join('')}
+    </tbody></table></div>`:'<div class="empty">補助員が登録されていません。</div>'}
+    <div class="row"><input type="text" id="newHelper" placeholder="補助員の名前"><button class="btn primary" data-act="hadd">補助員を追加</button></div>
+  </section>
+  <section class="panel stack"><h2>車両</h2>
+    <p class="note" style="margin:0">既定の運転手・補助員は、新しく作る日の送迎表に自動で入ります。当日の画面で変更できます。</p>
+    <div class="scroll"><table class="grid"><thead><tr><th>車両名</th><th>既定の運転手</th><th>既定の補助員</th><th></th></tr></thead><tbody>
+    ${vs.map(v=>`<tr><td><input type="text" value="${esc(v.name)}" data-ch="vname" data-id="${v.id}" aria-label="車両名"></td>
+      <td>${staffSelect('driver',v.driver,`data-ch="vstaff" data-id="${v.id}" data-f="driver" aria-label="既定の運転手"`)}</td>
+      <td>${staffSelect('helper',v.helper,`data-ch="vstaff" data-id="${v.id}" data-f="helper" aria-label="既定の補助員"`)}</td>
+      <td>${vs.length>1?`<button class="btn small danger ${ui.arm==='v'+v.id?'armed':''}" data-act="vdel" data-id="${v.id}">${ui.arm==='v'+v.id?'削除する':'削除'}</button>`:''}</td></tr>`).join('')}
+    </tbody></table></div>
+    <div class="row"><button class="btn" data-act="vadd">＋ 車両を追加</button></div>
+  </section></div>`;
+}
+function driverSlots(){return Array.from({length:MAX_DRIVERS},(_,i)=>{const s=S.staff['d'+(i+1)];return s&&s.role==='driver'?{id:'d'+(i+1),...s}:null})}
+function saveVehicle(id,patch){const v=vehicles().find(x=>x.id===id);const {id:_,...rest}=v;put('vehicles',id,{...rest,...patch})}
+function materializeVehicles(){if(!Object.keys(S.vehicles).length)vehicles().forEach(v=>{const {id,...r}=v;put('vehicles',id,r)})}
+
+/* ---------- 操作 ---------- */
+function go(view){if(location.hash!=='#'+view)location.hash=view;else{ui.view=view;render()}}
+const ACT={
+  goday(el,e){e.preventDefault();ui.date=el.dataset.date;ui.day=null;go('day')},
+  dshift(el){ui.date=addDays(ui.date,+el.dataset.n);ui.day=null;render()},
+  dtoday(){ui.date=todayStr();ui.day=null;render()},
+  pickname(el){const c=S.clients[el.dataset.cid]&&{id:el.dataset.cid,...S.clients[el.dataset.cid]};const r=riderOf(c.id);
+    if(r&&(r.pick.on||r.drop.on)){ui.day.riders=ui.day.riders.filter(x=>x!==r)}
+    else{const wd=wdKey(ui.date),s=sched(c,wd);let legs=scheduledOn(c,wd)?TYPES.map(([k])=>k).filter(k=>s[k].on):['pick','drop'];
+      if(r)ui.day.riders=ui.day.riders.filter(x=>x!==r);ui.day.riders.push(makeRider(c,ui.date,legs))}
+    ui.dayDirty=true;render()},
+  chip(el){const c={id:el.dataset.cid,...S.clients[el.dataset.cid]},k=el.dataset.t;let r=riderOf(c.id);
+    if(!r){r=makeRider(c,ui.date,[k]);ui.day.riders.push(r)}else{r[k].on=!r[k].on;pruneRider(r)}
+    ui.dayDirty=true;render()},
+  legoff(el){const r=findR(el.dataset.k);r[el.dataset.t].on=false;pruneRider(r);ui.dayDirty=true;render()},
+  allon(){const wd=wdKey(ui.date);clients().filter(c=>scheduledOn(c,wd)).forEach(c=>{const s=sched(c,wd),r=riderOf(c.id);
+    if(r)TYPES.forEach(([k])=>{if(s[k].on)r[k].on=true});else ui.day.riders.push(makeRider(c,ui.date,TYPES.map(([k])=>k).filter(k=>s[k].on)))});
+    ui.dayDirty=true;render()},
+  alloff(){ui.day.riders=[];ui.dayDirty=true;render()},
+  addfree(el){const n=document.getElementById('addName').value.trim();if(!n){toast('名前を入力してください');return}
+    const k=el.dataset.t,fv=firstVid();let r=ui.day.riders.find(x=>!x.cid&&x.name===n);
+    if(!r){r={key:uid('r'),cid:null,name:n,extra:true,pick:{on:false,dep:'',arr:'',vid:fv,note:''},drop:{on:false,dep:'',arr:'',vid:fv,note:''}};ui.day.riders.push(r)}
+    r[k].on=true;ui.addName='';ui.dayDirty=true;render();toast(n+' さんを'+TL[k]+'に追加しました。時間を入力してください')},
+  saveday(){const d=clone(ui.day);d.savedAt=new Date().toISOString();put('days',ui.date,d);ui.day=null;ui.dayDirty=false;render();toast(shortDate(ui.date)+' の送迎表を作成しました')},
+  tosheet(){ui.month=ui.date.slice(0,7);go('sheet')},
+  mshift(el){const [y,m]=ui.month.split('-').map(Number);const d=new Date(y,m-1+(+el.dataset.n),1);ui.month=d.getFullYear()+'-'+pad(d.getMonth()+1);render()},
+  svid(el){ui.sheetVid=el.dataset.v;render()},
+  stype(el){ui.sheetType=el.dataset.v;render()},
+  preview(el){ui.preview=el.dataset.scope;render();setTimeout(()=>document.getElementById('out')?.scrollIntoView({block:'start'}),0)},
+  closepreview(){ui.preview=null;render()},
+  pdf(){exportPdf()},
+  printfile(){saveFile(outName('html'),printHTML(ui.preview))},
+  htmlout(){const [y,m]=ui.month.split('-').map(Number);saveFile(`送迎管理（${vname(ui.sheetVid)}）${y}年${m}月.html`,printHTML('one'))},
+  xlsx(){exportXlsx()},
+  cnew(){ui.editClient=newClient();ui.arm=null;render();setTimeout(()=>document.getElementById('c_name')?.focus(),0)},
+  cedit(el){const c=S.clients[el.dataset.id],e=newClient();e.id=el.dataset.id;e.name=c.name||'';e.note=c.note||'';e.vid=clientVid(c);
+    WORK.forEach(k=>{const s=sched(c,k);e.schedule[k]={pick:{...s.pick},drop:{...s.drop}}});ui.editClient=e;ui.arm=null;render();window.scrollTo(0,0)},
+  ccancel(){ui.editClient=null;render()},
+  ccopy(){const e=ui.editClient,m=e.schedule.mon;WORK.forEach(k=>{if(k!=='mon')e.schedule[k]=clone(m)});render()},
+  csave(){const e=ui.editClient;if(!e.name.trim()){toast('利用者名を入力してください');return}
+    const id=e.id||uid('c');materializeVehicles();
+    put('clients',id,{name:e.name.trim(),note:e.note.trim(),vid:e.vid,schedule:clone(e.schedule)});ui.editClient=null;render();toast(e.name.trim()+' さんを保存しました')},
+  cdel(){const id=ui.editClient.id;if(ui.arm!=='c'+id){ui.arm='c'+id;render();return}del('clients',id);ui.editClient=null;ui.arm=null;render();toast('削除しました（作成済みの送迎表には残ります）')},
+  hadd(){const n=document.getElementById('newHelper').value.trim();if(!n){toast('名前を入力してください');return}put('staff',uid('h'),{name:n,role:'helper',active:true});render();toast(n+' さんを補助員に追加しました')},
+  sdel(el){const id=el.dataset.id;if(ui.arm!=='s'+id){ui.arm='s'+id;render();return}del('staff',id);ui.arm=null;render()},
+  vadd(){materializeVehicles();const vs=vehicles();put('vehicles',uid('v'),{name:'車両'+(vs.length+1),order:Math.max(...vs.map(v=>v.order||0))+1,driver:'',helper:''});render()},
+  vdel(el){const id=el.dataset.id;if(ui.arm!=='v'+id){ui.arm='v'+id;render();return}materializeVehicles();del('vehicles',id);ui.arm=null;render()},
+  backup(){const data={app:'sogei',version:2,exportedAt:new Date().toISOString()};COLLS.forEach(c=>data[c]=S[c]);saveFile(`送迎管理_バックアップ_${todayStr()}.json`,JSON.stringify(data,null,1))},
+  async 'restore-go'(){const d=ui.restore.data;ui.restore=null;render();
+    for(const c of COLLS)for(const [id,v] of Object.entries(d[c]||{}))await put(c,id,v);
+    ui.day=null;render();toast('復元しました')},
+  'restore-cancel'(){ui.restore=null;render()},
+};
+const INP={ // 入力中（再描画しない）
+  trip(el){ui.day.trips[el.dataset.vid][el.dataset.t][el.dataset.f]=el.value;markDirty()},
+  leg(el){findR(el.dataset.k)[el.dataset.t][el.dataset.f]=el.value;markDirty()},
+  c(el){ui.editClient[el.dataset.f]=el.value},
+  cs(el){const L=ui.editClient.schedule[el.dataset.d][el.dataset.g];
+    if(el.type==='checkbox'){L.on=el.checked;render();return}
+    L[el.dataset.f]=el.value;if(el.value&&!L.on){L.on=true;const cb=document.getElementById(`c_${el.dataset.d}_${el.dataset.g}_on`);if(cb)cb.checked=true}},
+};
+const CHG={ // 確定時
+  date(el){if(el.value){ui.date=el.value;ui.day=null;render()}},
+  month(el){if(el.value){ui.month=el.value;render()}},
+  legveh(el){findR(el.dataset.k)[el.dataset.t].vid=el.value;ui.dayDirty=true;render()},
+  dname(el){const id='d'+el.dataset.slot,n=el.value.trim(),cur=S.staff[id];
+    if(!n){if(cur){del('staff',id);toast('運転手'+el.dataset.slot+'を空欄にしました')}render();return}
+    put('staff',id,{name:n,role:'driver',slot:+el.dataset.slot,active:cur?cur.active!==false:true});render();toast('運転手'+el.dataset.slot+'：'+n+' を保存しました')},
+  dactive(el){put('staff',el.dataset.id,{...S.staff[el.dataset.id],active:el.value==='1'});render()},
+  hname(el){const s=S.staff[el.dataset.id];if(el.value.trim())put('staff',el.dataset.id,{...s,name:el.value.trim()})},
+  hactive(el){put('staff',el.dataset.id,{...S.staff[el.dataset.id],role:'helper',active:el.value==='1'});render()},
+  vname(el){if(el.value.trim()){materializeVehicles();saveVehicle(el.dataset.id,{name:el.value.trim()})}},
+  vstaff(el){materializeVehicles();saveVehicle(el.dataset.id,{[el.dataset.f]:el.value})},
+  restore(el){const f=el.files[0];if(!f)return;const rd=new FileReader();
+    rd.onload=()=>{try{const d=JSON.parse(rd.result);if(d.app!=='sogei')throw 0;ui.restore={name:f.name,data:d};render()}catch(e){toast('このファイルは送迎管理のバックアップではありません')}};rd.readAsText(f)},
+};
+document.addEventListener('click',e=>{const el=e.target.closest('[data-act]');if(el&&ACT[el.dataset.act])ACT[el.dataset.act](el,e)});
+document.addEventListener('input',e=>{const el=e.target;if(el.id==='addName')ui.addName=el.value;if(el.dataset&&INP[el.dataset.in])INP[el.dataset.in](el)});
+document.addEventListener('change',e=>{const el=e.target;if(el.dataset&&CHG[el.dataset.ch])CHG[el.dataset.ch](el)});
+const VIEWS=['home','day','sheet','clients','staff'];
+function route(){const h=location.hash.slice(1);ui.view=VIEWS.includes(h)?h:'home';ui.arm=null;if(mode!=='loading')render();window.scrollTo(0,0)}
+window.addEventListener('hashchange',route);
+route();initStore();
+</script>
+
+</body>
+</html>
