@@ -165,6 +165,18 @@ table.trip input[type=time]{min-height:40px;width:6.6em}
 .lbl{white-space:nowrap;line-height:1.4}
 .own{display:inline-block;line-height:1.4;font-size:11px;padding:0 6px;border-radius:4px;background:var(--warn-soft);color:var(--warn)}
 .oform{display:flex;flex-direction:column;gap:12px;border:2px solid var(--accent);border-radius:var(--r);padding:14px}
+.olist2{display:flex;flex-wrap:wrap;gap:8px}
+.oname{font:inherit;font-weight:700;font-size:17px;min-height:52px;padding:6px 14px;border:2px solid var(--line-strong);border-radius:var(--r);background:var(--bg);color:var(--fg);cursor:pointer;display:inline-flex;align-items:center;gap:8px}
+.oname:hover{border-color:var(--accent)}
+.oname .ck{width:22px;height:22px;border-radius:50%;border:2px solid var(--line-strong);flex:none}
+.oname .tag{font-size:12px}
+.st{display:inline-block;font-weight:700;font-size:14px;padding:2px 10px;border-radius:99px;white-space:nowrap}
+.st.fixed{background:var(--accent-soft);color:var(--accent)}
+.st.flex{background:var(--warn-soft);color:var(--warn)}
+.seg.big button{min-height:48px;padding:0 22px;font-size:17px}
+.daybtn{font:inherit;font-weight:700;font-size:18px;width:52px;height:46px;border-radius:6px;border:2px solid var(--line-strong);background:var(--bg);color:var(--muted);cursor:pointer}
+.daybtn[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+tr.offday td:not(.dn){opacity:.35}
 /* 利用者管理 */
 .wk td{white-space:nowrap}
 .wk .t{font-family:var(--font-num);font-size:13px;line-height:1.45}
@@ -259,7 +271,7 @@ table.sheet tr.none td{color:var(--muted);background:var(--surface)}
     <nav id="nav">
       <a href="#home">ホーム</a>
       <a href="#day">毎日の送迎入力</a>
-      <a href="#clients">利用者・レギュラー登録</a>
+      <a href="#clients">利用者登録</a>
       <a href="#vehicles">車両・基本運転手</a>
       <a href="#drivers">運転手登録</a>
       <a href="#sheet">送迎表・Excel出力</a>
@@ -379,11 +391,11 @@ function staffFor(role){
   return staff().filter(s=>s.role!=='driver'&&s.active!==false);
 }
 function clientVid(c){const v=c.vid||c.pickVid;return vehicles().some(x=>x.id===v)?v:firstVid()}
-/* ===== レギュラー登録（送迎パターン） =====
- clients/<id>.patterns = [ { id, mode:"week"|"date", days:["mon",…], dates:["2026-11-05",…],
-                             pick:{on,dep,arr}, drop:{on,dep,arr}, vid, note } ]
- 毎日・曜日固定・月1回の人もすべてこの形で登録する。
- その日の内容の決め方：その日付を指定したパターンを優先（その日だけの設定）→ なければ曜日のパターン。 */
+/* ===== 利用者の登録内容 =====
+ clients/<id> = { name, note, status:"fixed"(曜日固定)|"flex"(不確定), vid(基本車両), driver(基本運転手),
+   week:{ mon:{on, pick:{on,dep,arr}, drop:{on,dep,arr}}, … sat },   … 曜日固定の人
+   flex:{ pick:{on,dep,arr}, drop:{on,dep,arr}} }                     … 不確定の人（追加するときの初期値）
+ 以前の登録形式（patterns／schedule）は読み込むときにこの形へ読み替える。データは消さない。 */
 const PWD=['mon','tue','wed','thu','fri','sat','sun'];
 function oldLeg(s,k){const v=s[k];
   if(v&&typeof v==='object')return {on:!!v.on,dep:v.dep||'',arr:v.arr||''};
@@ -392,31 +404,45 @@ function oldLeg(s,k){const v=s[k];
 function normPat(p,c){const L=x=>({on:!!(x&&x.on),dep:(x&&x.dep)||'',arr:(x&&x.arr)||'',driver:(x&&x.driver)||''});
   return {id:p.id||uid('p'),mode:p.mode==='date'?'date':'week',days:[...(p.days||[])],dates:[...(p.dates||[])].sort(),
     pick:L(p.pick),drop:L(p.drop),vid:vehicles().some(v=>v.id===p.vid)?p.vid:clientVid(c),note:p.note||''}}
-function patternsOf(c){
+function patternsOf(c){ // 以前の形式の読み込み用
   if(Array.isArray(c.patterns))return c.patterns.map(p=>normPat(p,c));
-  // 以前の「曜日ごとの表」の登録を読み替える（同じ内容の曜日は1つのパターンにまとめる）
   const out=[],sch=c.schedule||{};
   WORK.forEach(wd=>{const s=sch[wd]||{},pick=oldLeg(s,'pick'),drop=oldLeg(s,'drop');if(!pick.on&&!drop.on)return;
     const key=JSON.stringify([pick,drop]),q=out.find(x=>x.key===key);
     if(q)q.p.days.push(wd);else out.push({key,p:{id:'p'+out.length,mode:'week',days:[wd],dates:[],pick,drop,vid:clientVid(c),note:''}})});
   return out.map(x=>normPat(x.p,c));
 }
-function patternFor(c,date){
-  const ps=patternsOf(c),wd=wdKey(date);
-  return ps.find(p=>p.mode==='date'&&p.dates.includes(date))||ps.find(p=>p.mode==='week'&&p.days.includes(wd))||null;
+function tLeg(x){return {on:!!(x&&x.on),dep:(x&&x.dep)||'',arr:(x&&x.arr)||''}}
+function emptyDay(){return {on:false,pick:{on:true,dep:'',arr:''},drop:{on:true,dep:'',arr:''}}}
+function clientInfo(c){
+  if(c.status){
+    const week={};WORK.forEach(d=>{const w=(c.week||{})[d];week[d]=w?{on:!!w.on,pick:tLeg(w.pick),drop:tLeg(w.drop)}:emptyDay()});
+    const f=c.flex||{};
+    return {status:c.status==='flex'?'flex':'fixed',vid:clientVid(c),driver:c.driver||'',week,flex:{pick:f.pick?tLeg(f.pick):{on:true,dep:'',arr:''},drop:f.drop?tLeg(f.drop):{on:true,dep:'',arr:''}}};
+  }
+  const ps=patternsOf(c),week={};WORK.forEach(d=>week[d]=emptyDay());
+  ps.filter(p=>p.mode==='week').forEach(p=>p.days.forEach(d=>{if(week[d]&&!week[d].on&&(p.pick.on||p.drop.on))week[d]={on:true,pick:tLeg(p.pick),drop:tLeg(p.drop)}}));
+  const first=ps[0],fixed=WORK.some(d=>week[d].on);
+  return {status:fixed?'fixed':'flex',vid:first?first.vid:clientVid(c),driver:c.driver||(first&&(first.pick.driver||first.drop.driver))||'',week,
+    flex:{pick:first?tLeg(first.pick):{on:true,dep:'',arr:''},drop:first?tLeg(first.drop):{on:true,dep:'',arr:''}}};
 }
-function scheduledOnDate(c,date){const p=patternFor(c,date);return !!(p&&(p.pick.on||p.drop.on))}
-/* その日の迎え／送りの内容。予定がない日（臨時）は、その迎え／送りがある最初のパターンを使う */
+function dayConf(c,date){const i=clientInfo(c),w=i.week[wdKey(date)];return i.status==='fixed'&&w&&w.on&&(w.pick.on||w.drop.on)?w:null}
+function scheduledOnDate(c,date){return !!dayConf(c,date)}
+/* その日の迎え／送りの初期値。曜日が当てはまらない日は、その迎え／送りがある最初の曜日（不確定の人は登録時間）を使う */
 function legFor(c,date,k){
-  const p=scheduledOnDate(c,date)?patternFor(c,date):patternsOf(c).find(q=>q[k].on);
-  return p?{...p[k],vid:p.vid,note:p.note}:{on:false,dep:'',arr:'',driver:'',vid:clientVid(c),note:''};
+  const i=clientInfo(c),w=dayConf(c,date);
+  let L=w?w[k]:null;
+  if(!L)L=i.status==='flex'?i.flex[k]:(WORK.map(d=>i.week[d]).find(x=>x.on&&x[k].on)||{})[k];
+  L=L||{on:false,dep:'',arr:''};
+  return {on:L.on,dep:L.dep,arr:L.arr,vid:i.vid,driver:i.driver,note:''};
 }
 function defaultLegs(c,date){
-  const all=TYPES.map(([k])=>k);
-  if(scheduledOnDate(c,date)){const p=patternFor(c,date);return all.filter(k=>p[k].on)}
-  const legs=all.filter(k=>patternsOf(c).some(q=>q[k].on));return legs.length?legs:all;
+  const all=TYPES.map(([k])=>k),i=clientInfo(c),w=dayConf(c,date);
+  if(w)return all.filter(k=>w[k].on);
+  const legs=i.status==='flex'?all.filter(k=>i.flex[k].on):all.filter(k=>WORK.some(d=>i.week[d].on&&i.week[d][k].on));
+  return legs.length?legs:all;
 }
-function upcomingDates(c,from){return [...new Set(patternsOf(c).filter(p=>p.mode==='date').flatMap(p=>p.dates))].filter(d=>d>=from).sort()}
+function fixedDays(c){const i=clientInfo(c);return i.status==='fixed'?WORK.filter(d=>i.week[d].on).map(d=>WDJ[WD.indexOf(d)]).join('・'):''}
 
 /* ---------- 当日データ ---------- */
 /* 利用者1人ごと・迎え／送りごとに、車両・運転手・時間を持つ。
@@ -445,8 +471,8 @@ function ensureDay(){
   if(!ui.day||ui.day.date!==ui.date||!ui.dayDirty){ui.day=saved?normalizeDay(clone(saved)):buildDay(ui.date);ui.dayDirty=false}
 }
 function makeRider(c,date,legs){
-  const p=patternFor(c,date),extra=!scheduledOnDate(c,date);
-  const r={key:uid('r'),cid:c.id,name:c.name,extra,byDate:!extra&&p.mode==='date'};
+  const extra=!scheduledOnDate(c,date);
+  const r={key:uid('r'),cid:c.id,name:c.name,extra,other:extra};
   TYPES.forEach(([k])=>{const L=legFor(c,date,k);
     r[k]={on:legs.includes(k),dep:L.dep,arr:L.arr,vid:L.vid,driver:L.driver||baseDriver(L.vid),helper:baseHelper(L.vid),
       note:[L.note,c.note].filter(Boolean).join('　')}});
@@ -483,7 +509,7 @@ function vHome(){
   <div><p class="sub">今日</p><div class="today num">${longDate(td)}</div><p style="margin:6px 0 0">${st}</p></div>
   <div class="tiles">
     <a class="tile main" href="#day" data-act="goday" data-date="${td}"><b>毎日の送迎入力</b><span>今日の送迎表を作る</span></a>
-    <a class="tile" href="#clients"><b>利用者・レギュラー登録</b><span>${clients().length}名</span></a>
+    <a class="tile" href="#clients"><b>利用者登録</b><span>${clients().length}名</span></a>
     <a class="tile" href="#vehicles"><b>車両・基本運転手</b><span>${vehicles().map(v=>esc(v.name)+'：'+esc(v.driver||'未設定')).join('　')}</span></a>
     <a class="tile" href="#drivers"><b>運転手登録</b><span>${driverSlots().filter(Boolean).length}名</span></a>
     <a class="tile" href="#sheet"><b>送迎表・Excel出力</b><span>月間の送迎表・Excel・PDF</span></a>
@@ -532,10 +558,9 @@ function riderRow(c){
   const r=riderOf(c.id),sel=!!r;
   if(!sel){
     const legs=defaultLegs(c,ui.date),pv=k=>{const L=legFor(c,ui.date,k);return {...L,on:legs.includes(k),driver:L.driver||baseDriver(L.vid)}};
-    const p=patternFor(c,ui.date);
     return `<div class="rrow">
       <button class="rname" data-act="pickname" data-cid="${c.id}" aria-pressed="false"><span class="ck"></span>${esc(c.name)}</button>
-      <div class="rsum">${p&&p.mode==='date'?'<span class="tag extra">日付指定</span>':''}
+      <div class="rsum">
         <span><span class="tag pick">迎</span> ${legSummary(pv('pick'))}</span>
         <span><span class="tag drop">送</span> ${legSummary(pv('drop'))}</span></div>
     </div>`;
@@ -545,9 +570,12 @@ function riderRow(c){
     <div class="redit">${legLine(r,'pick')}${legLine(r,'drop')}</div>
   </div>`;
 }
+function kindTag(c){if(!c)return '<span class="tag extra">当日限定</span>';const i=clientInfo(c);
+  return i.status==='flex'?'<span class="tag extra">不確定</span>':`<span class="tag extra">曜日外（${fixedDays(c)||'曜日なし'}）</span>`}
 function otherRow(r){
+  const c=r.cid&&S.clients[r.cid]?{id:r.cid,...S.clients[r.cid]}:null;
   return `<div class="rrow sel">
-    <div class="rname static"><span>${esc(r.name)}</span><span class="tag extra">その他</span>
+    <div class="rname static"><span>${esc(r.name)}</span>${kindTag(c)}
       <button class="btn small danger" data-act="otherdel" data-k="${r.key}">取り消す</button></div>
     <div class="redit">${legLine(r,'pick')}${legLine(r,'drop')}</div>
   </div>`;
@@ -555,7 +583,8 @@ function otherRow(r){
 function vDay(){
   ensureDay();
   const d=ui.day,today=clients().filter(c=>scheduledOnDate(c,ui.date));
-  const others=d.riders.filter(r=>r.other||!r.cid||!today.some(c=>c.id===r.cid));
+  const others=d.riders.filter(r=>!r.cid||!today.some(c=>c.id===r.cid));
+  const cand=clients().filter(c=>!scheduledOnDate(c,ui.date)&&!riderOf(c.id));
   const cnt=counts(d),picked=today.filter(c=>riderOf(c.id)).length;
   return `<div class="stack">
   <div class="dayhead">
@@ -576,16 +605,16 @@ function vDay(){
   </section>
 
   <section class="block">
-    <div class="bh"><h2>その他</h2><span class="note">登録していない方・この日だけの方</span><span class="spacer"></span>
-      ${ui.other?'':`<button class="btn" data-act="otheropen">＋ その他を追加</button>`}</div>
-    ${ui.other?otherForm(ui.other):''}
-    ${others.length?`<div class="rlist">${others.map(otherRow).join('')}</div>`:(ui.other?'':'<p class="hint">まだいません。</p>')}
+    <div class="bh"><h2>その他</h2><span class="note">曜日が当てはまらない人・不確定の人・未登録の人</span></div>
+    ${cand.length?`<p class="hint">送迎が必要な人だけ名前を押してください。押すまでは送迎表に入りません。</p>
+      <div class="olist2">${cand.map(c=>`<button class="oname" data-act="pickname" data-cid="${c.id}"><span class="ck"></span><span>${esc(c.name)}</span>${kindTag(c)}</button>`).join('')}</div>`:''}
+    ${others.length?`<div class="rlist">${others.map(otherRow).join('')}</div>`:''}
+    ${ui.other?otherForm(ui.other):`<div><button class="btn" data-act="otheropen">＋ 未登録の方を追加</button></div>`}
   </section>
   </div>`;
 }
 function otherForm(o){
   const a=(g,f)=>`data-in="oth"${g?` data-g="${g}"`:''} data-f="${f}"`;
-  const reg=clients().filter(c=>!riderOf(c.id));
   const leg=(g,l)=>{const L=o[g];return `<div class="leg ${g} ${L.on?'on':'off'}">
     <label class="lt as"><input type="checkbox" id="o_${g}_on" ${a(g,'on')} ${L.on?'checked':''}> ${l}</label>
     ${L.on?`<div class="lf">
@@ -597,11 +626,10 @@ function otherForm(o){
   return `<div class="oform">
     <div class="fgrid">
       <label class="f">利用者名<input type="text" id="o_name" value="${esc(o.name)}" ${a('','name')} placeholder="例：見学の方"></label>
-      ${reg.length?`<label class="f">登録済みの方から選ぶ（任意）<select id="o_from" data-ch="otherfrom"><option value="">選ばない</option>${reg.map(c=>`<option value="${c.id}" ${o.cid===c.id?'selected':''}>${esc(c.name)}</option>`).join('')}</select></label>`:''}
       <label class="f">備考<input type="text" id="o_note" value="${esc(o.note)}" ${a('','note')} placeholder="例：体験利用"></label>
     </div>
     ${leg('pick','お迎え')}${leg('drop','お送り')}
-    <div class="row"><button class="btn primary" data-act="otheradd">追加する</button><button class="btn" data-act="otherclose">やめる</button></div>
+    <div class="row"><button class="btn primary" data-act="otheradd">追加する</button><button class="btn" data-act="otherclose">やめる</button><span class="note">この日だけの追加です。利用者登録には入りません。</span></div>
   </div>`;
 }
 function newOther(){const fv=firstVid(),L=()=>({on:true,vid:fv,driver:baseDriver(fv),helper:baseHelper(fv),dep:'',arr:''});return {name:'',note:'',cid:null,pick:L(),drop:L()}}
@@ -818,69 +846,59 @@ async function exportXlsx(){
   catch(e){toast('Excelを作成できませんでした')}
 }
 
-/* ----- 利用者の登録（レギュラー登録） ----- */
-function newPat(mode,vid){return {id:uid('p'),mode,days:[],dates:[],pick:{on:true,dep:'',arr:''},drop:{on:true,dep:'',arr:''},vid:vid||firstVid(),note:''}}
-function newClient(){const vid=firstVid();return {id:null,name:'',note:'',vid,patterns:[newPat('week',vid)]}}
-function wdLabel(days){return PWD.filter(d=>days.includes(d)).map(d=>WDJ[WD.indexOf(d)]).join('・')}
-function patWhen(p){return p.mode==='week'?(p.days.length?`毎週 ${wdLabel(p.days)}`:'曜日未選択'):(p.dates.length?`日付 ${p.dates.map(md).join('・')}`:'日付未選択')}
-function patLegs(p){const f=(L,lab,cls)=>`<span class="${cls}">${lab} ${L.on?`${t(L.dep)||'--'}→${t(L.arr)||'--'}${L.driver?'（'+esc(L.driver)+'）':''}`:'なし'}</span>`;return f(p.pick,'迎','p')+'　'+f(p.drop,'送','d')}
+/* ----- 利用者登録 ----- */
+function newClient(){const vid=firstVid(),week={};WORK.forEach(d=>week[d]=emptyDay());
+  return {id:null,name:'',note:'',status:'fixed',vid,driver:'',week,flex:{pick:{on:true,dep:'',arr:''},drop:{on:true,dep:'',arr:''}}}}
+function tsum(L){return L.on?`${t(L.dep)||'--'}→${t(L.arr)||'--'}`:'なし'}
 function vClients(){
   const list=clients(),e=ui.editClient;
   return `<div class="stack">
-  <div class="row"><div><h1>利用者・レギュラー登録</h1><p class="sub">毎週の人も月1回の人も、ここで登録します。1人に複数のパターンを登録できます。</p></div><span class="spacer"></span>
+  <div class="row"><div><h1>利用者登録</h1><p class="sub">曜日固定の人は曜日に応じて「当日送迎あり」に、不確定の人は「その他」に表示されます。</p></div><span class="spacer"></span>
     <button class="btn primary" data-act="cnew">＋ 利用者を追加</button></div>
   ${e?clientEditor(e):''}
-  ${list.length?`<div class="scroll"><table class="grid wk"><thead><tr><th>利用者名</th><th>送迎パターン</th><th></th></tr></thead><tbody>
-    ${list.map(c=>{const ps=patternsOf(c);return `<tr><td><b>${esc(c.name)}</b>${c.note?`<br><small class="note">${esc(c.note)}</small>`:''}</td>
-    <td>${ps.length?ps.map(p=>`<div class="pl"><b>${esc(patWhen(p))}</b><span class="t">${patLegs(p)}</span><span class="note">${esc(vname(p.vid))}${p.note?'　'+esc(p.note):''}</span></div>`).join(''):'<span class="note">パターン未登録</span>'}</td>
-    <td><button class="btn small" data-act="cedit" data-id="${c.id}">編集</button></td></tr>`}).join('')}</tbody></table></div>
-  <p class="note" style="margin:0">「迎」お迎え、「送」お送り。どちらも 出発時間→到着時間 です。</p>`
+  ${list.length?`<div class="scroll"><table class="grid wk"><thead><tr><th>利用者名</th><th>利用状況</th><th>基本車両・運転手</th><th>送迎</th><th></th></tr></thead><tbody>
+    ${list.map(c=>{const i=clientInfo(c);return `<tr><td><b>${esc(c.name)}</b>${c.note?`<br><small class="note">${esc(c.note)}</small>`:''}</td>
+    <td><span class="st ${i.status}">${i.status==='fixed'?'曜日固定':'不確定'}</span></td>
+    <td>${esc(vname(i.vid))}<br><small class="note">${esc(i.driver||'車両の基本運転手（'+(baseDriver(i.vid)||'未設定')+'）')}</small></td>
+    <td class="t">${i.status==='fixed'?WORK.filter(d=>i.week[d].on).map(d=>`<div><b>${WDJ[WD.indexOf(d)]}</b> <span class="p">迎 ${tsum(i.week[d].pick)}</span>　<span class="d">送 ${tsum(i.week[d].drop)}</span></div>`).join('')||'<span class="note">曜日未設定</span>'
+      :`<div><span class="p">迎 ${tsum(i.flex.pick)}</span>　<span class="d">送 ${tsum(i.flex.drop)}</span></div>`}</td>
+    <td><button class="btn small" data-act="cedit" data-id="${c.id}">編集</button></td></tr>`}).join('')}</tbody></table></div>`
   :`<div class="empty">まだ利用者が登録されていません。「＋ 利用者を追加」から登録してください。</div>`}
   </div>`;
 }
-function patEditor(p,i){
-  const a=(g,f)=>`data-in="pat" data-i="${i}"${g?` data-g="${g}"`:''} data-f="${f}"`;
-  const leg=(g,l)=>{const L=p[g];return `<div class="plg ${g} ${L.on?'':'off'}">
-    <label class="row" style="gap:6px"><input type="checkbox" id="p_${i}_${g}_on" ${a(g,'on')} ${L.on?'checked':''}> <span class="tag ${g}">${l}</span> 利用する</label>
-    <div class="row"><label class="f">出発時間<input type="time" id="p_${i}_${g}_dep" value="${L.dep}" ${a(g,'dep')}></label>
-    <label class="f">到着時間<input type="time" id="p_${i}_${g}_arr" value="${L.arr}" ${a(g,'arr')}></label>
-    <label class="f">基本の運転手${staffSelect('driver',L.driver,`id="p_${i}_${g}_driver" ${a(g,'driver')}`,'車両の基本運転手')}</label></div></div>`};
-  return `<div class="pat">
-    <div class="row"><h3>パターン${i+1}</h3>
-      <span class="seg" role="group" aria-label="指定のしかた"><button data-act="pmode" data-i="${i}" data-m="week" aria-pressed="${p.mode==='week'}">曜日で指定</button><button data-act="pmode" data-i="${i}" data-m="date" aria-pressed="${p.mode==='date'}">日付で指定</button></span>
-      <span class="spacer"></span><button class="btn small" data-act="pdup" data-i="${i}">複製</button><button class="btn small danger" data-act="pdel" data-i="${i}">このパターンを削除</button></div>
-    ${p.mode==='week'?`<div class="row"><span class="note">利用する曜日</span><span class="dpick">${PWD.map(d=>`<button data-act="pday" data-i="${i}" data-d="${d}" aria-pressed="${p.days.includes(d)}">${WDJ[WD.indexOf(d)]}</button>`).join('')}</span></div>`
-    :`<div class="row"><span class="note">送迎する日付</span><input type="date" id="pd_${i}" aria-label="追加する日付"><button class="btn small" data-act="pdateadd" data-i="${i}">日付を追加</button>
-      ${p.dates.map(d=>`<span class="dchip">${shortDate(d)}<button data-act="pdatedel" data-i="${i}" data-v="${d}" aria-label="${shortDate(d)}を外す">×</button></span>`).join('')||'<span class="note">まだ日付がありません</span>'}</div>`}
-    <div class="plegs">${leg('pick','お迎え')}${leg('drop','お送り')}</div>
-    <div class="fgrid"><label class="f">利用する車両${vehSelect(p.vid,`id="p_${i}_vid" ${a('','vid')}`)}</label>
-      <label class="f">このパターンの備考<input type="text" id="p_${i}_note" value="${esc(p.note)}" ${a('','note')} placeholder="例：通院の日"></label></div>
-  </div>`;
-}
-function patWarnings(e){
-  const w=[],seen={};
-  e.patterns.forEach((p,i)=>(p.mode==='week'?p.days.map(d=>'w'+d):p.dates.map(d=>'d'+d)).forEach(k=>{if(seen[k]!=null&&seen[k]!==i)w.push(`${k[0]==='w'?WDJ[WD.indexOf(k.slice(1))]+'曜日':shortDate(k.slice(1))}がパターン${seen[k]+1}とパターン${i+1}で重なっています（パターン${seen[k]+1}が使われます）`);else seen[k]=i}));
-  return w;
+function timeCells(L,base,on){
+  const a=f=>`${base} data-f="${f}"`;
+  return `<td class="${on&&L.on?'':'off'}"><label class="row" style="gap:6px"><input type="checkbox" ${a('on')} ${L.on?'checked':''} ${on?'':'disabled'} aria-label="利用"></label></td>
+    <td class="${on&&L.on?'':'off'}"><input type="time" value="${L.dep}" ${a('dep')} ${on&&L.on?'':'disabled'} aria-label="出発"></td>
+    <td class="${on&&L.on?'':'off'}"><input type="time" value="${L.arr}" ${a('arr')} ${on&&L.on?'':'disabled'} aria-label="到着"></td>`;
 }
 function clientEditor(e){
-  const warn=patWarnings(e);
   return `<div class="editor">
   <h2>${e.id?'利用者を編集':'利用者を追加'}</h2>
   <div class="fgrid">
     <label class="f">利用者名<input type="text" id="c_name" value="${esc(e.name)}" data-in="c" data-f="name" placeholder="例：山田 太郎"></label>
-    <label class="f">基本の車両${vehSelect(e.vid,'id="c_vid" data-in="c" data-f="vid"')}</label>
-    <label class="f">備考（送迎表の備考欄に入ります）<input type="text" id="c_note" value="${esc(e.note)}" data-in="c" data-f="note" placeholder="例：車いす"></label>
+    <label class="f">基本車両${vehSelect(e.vid,'id="c_vid" data-in="c" data-f="vid"')}</label>
+    <label class="f">基本運転手${staffSelect('driver',e.driver,'id="c_driver" data-in="c" data-f="driver"','車両の基本運転手（'+esc(baseDriver(e.vid)||'未設定')+'）')}</label>
   </div>
-  <div class="stack" style="gap:6px"><h3>送迎パターン</h3>
-    <p class="note" style="margin:0">曜日で決まっている送迎は「曜日で指定」、月に1回など決まった日だけの送迎は「日付で指定」で登録します。同じ日に両方あるときは、日付で指定したパターンがその日だけ使われます。</p></div>
-  ${e.patterns.map(patEditor).join('')||'<div class="empty">パターンがありません。下のボタンから追加してください。</div>'}
-  <div class="row"><button class="btn" data-act="padd" data-m="week">＋ 曜日のパターンを追加</button><button class="btn" data-act="padd" data-m="date">＋ 日付のパターンを追加</button></div>
-  ${warn.length?`<div class="warnbox">${warn.map(esc).join('<br>')}</div>`:''}
+  <div class="row"><b>利用状況</b>
+    <span class="seg big" role="group" aria-label="利用状況"><button data-act="cstatus" data-v="fixed" aria-pressed="${e.status==='fixed'}">曜日固定</button><button data-act="cstatus" data-v="flex" aria-pressed="${e.status==='flex'}">不確定</button></span>
+    <span class="note">${e.status==='fixed'?'毎週決まった曜日に通う人':'通う曜日が決まっていない人（毎日の画面では「その他」に表示）'}</span></div>
+  ${e.status==='fixed'?`<div class="scroll"><table class="week"><thead>
+    <tr><th rowspan="2">曜日</th><th colspan="3" class="gp"><span class="tag pick">お迎え</span></th><th colspan="3" class="gd"><span class="tag drop">お送り</span></th></tr>
+    <tr><th class="gp">利用</th><th>出発</th><th>到着</th><th class="gd">利用</th><th>出発</th><th>到着</th></tr></thead><tbody>
+    ${WORK.map(d=>{const w=e.week[d],b=g=>`data-in="cw" data-d="${d}" data-g="${g}"`;
+      return `<tr class="${w.on?'':'offday'}"><td class="dn"><button class="daybtn" data-act="cday" data-d="${d}" aria-pressed="${w.on}">${WDJ[WD.indexOf(d)]}</button></td>
+      ${timeCells(w.pick,b('pick'),w.on).replace('<td class="','<td class="gp ')}${timeCells(w.drop,b('drop'),w.on).replace('<td class="','<td class="gd ')}</tr>`}).join('')}
+    </tbody></table></div>
+    <div class="row"><button class="btn small" data-act="ccopy">最初の曜日の時間をほかの曜日にコピー</button><span class="note">曜日を押して選びます。</span></div>`
+  :`<div class="scroll"><table class="week"><thead><tr><th></th><th>利用</th><th>出発</th><th>到着</th></tr></thead><tbody>
+    ${TYPES.map(([k,l])=>`<tr><td><span class="tag ${k}">${l}</span></td>${timeCells(e.flex[k],`data-in="cf" data-g="${k}"`,true)}</tr>`).join('')}
+    </tbody></table></div><p class="hint">「その他」から追加するときの初期値です。</p>`}
+  <label class="f" style="max-width:420px">備考（任意）<input type="text" id="c_note" value="${esc(e.note)}" data-in="c" data-f="note" placeholder="例：車いす"></label>
   <div class="row">
     <button class="btn primary" data-act="csave">保存</button><button class="btn" data-act="ccancel">閉じる</button><span class="spacer"></span>
     ${e.id?`<button class="btn danger ${ui.arm==='c'+e.id?'armed':''}" data-act="cdel">${ui.arm==='c'+e.id?'本当に削除する':'この利用者を削除'}</button>`:''}
-  </div>
-  <p class="note" style="margin:0">登録内容を変えても、すでに作成した送迎表は変わりません。</p></div>`;
+  </div></div>`;
 }
 
 /* ----- 車両・基本運転手 ----- */
@@ -968,24 +986,21 @@ const ACT={
   htmlout(){const [y,m]=ui.month.split('-').map(Number);saveFile(`送迎管理（${vname(ui.sheetVid)}）${y}年${m}月.html`,printHTML('one'))},
   xlsx(){exportXlsx()},
   cnew(){ui.editClient=newClient();ui.arm=null;render();setTimeout(()=>document.getElementById('c_name')?.focus(),0)},
-  cedit(el){const c=S.clients[el.dataset.id],e=newClient();e.id=el.dataset.id;e.name=c.name||'';e.note=c.note||'';e.vid=clientVid(c);
-    const ps=patternsOf(c);if(ps.length)e.patterns=ps;ui.editClient=e;ui.arm=null;render();window.scrollTo(0,0)},
+  cedit(el){const c=S.clients[el.dataset.id],i=clientInfo(c);
+    ui.editClient={id:el.dataset.id,name:c.name||'',note:c.note||'',status:i.status,vid:i.vid,driver:i.driver,week:clone(i.week),flex:clone(i.flex)};ui.arm=null;render();window.scrollTo(0,0)},
   ccancel(){ui.editClient=null;render()},
-  padd(el){const e=ui.editClient;e.patterns.push(newPat(el.dataset.m,e.vid));render()},
-  pdup(el){const e=ui.editClient,p=clone(e.patterns[+el.dataset.i]);p.id=uid('p');if(p.mode==='week')p.days=[];else p.dates=[];e.patterns.splice(+el.dataset.i+1,0,p);render();toast('パターンを複製しました。曜日または日付を選んでください')},
-  pdel(el){ui.editClient.patterns.splice(+el.dataset.i,1);render()},
-  pmode(el){const p=ui.editClient.patterns[+el.dataset.i];p.mode=el.dataset.m;render()},
-  pday(el){const p=ui.editClient.patterns[+el.dataset.i],d=el.dataset.d;p.days=p.days.includes(d)?p.days.filter(x=>x!==d):[...p.days,d];render()},
-  pdateadd(el){const i=+el.dataset.i,p=ui.editClient.patterns[i],v=document.getElementById('pd_'+i).value;
-    if(!v){toast('日付を選んでください');return}if(!p.dates.includes(v))p.dates=[...p.dates,v].sort();render()},
-  pdatedel(el){const p=ui.editClient.patterns[+el.dataset.i];p.dates=p.dates.filter(x=>x!==el.dataset.v);render()},
+  cstatus(el){ui.editClient.status=el.dataset.v;render()},
+  cday(el){const w=ui.editClient.week[el.dataset.d];w.on=!w.on;render()},
+  ccopy(){const e=ui.editClient,src=WORK.find(d=>e.week[d].on);if(!src){toast('先に曜日を選んでください');return}
+    WORK.forEach(d=>{if(d!==src&&e.week[d].on)e.week[d]={on:true,pick:{...e.week[src].pick},drop:{...e.week[src].drop}}});render();toast(WDJ[WD.indexOf(src)]+'曜日の時間をコピーしました')},
   csave(){const e=ui.editClient;if(!e.name.trim()){toast('利用者名を入力してください');return}
-    for(let i=0;i<e.patterns.length;i++){const p=e.patterns[i],n='パターン'+(i+1);
-      if(p.mode==='week'&&!p.days.length){toast(n+'の曜日を選んでください');return}
-      if(p.mode==='date'&&!p.dates.length){toast(n+'の日付を追加してください');return}
-      if(!p.pick.on&&!p.drop.on){toast(n+'のお迎え・お送りのどちらかを「利用」にしてください');return}}
+    if(e.status==='fixed'){const days=WORK.filter(d=>e.week[d].on);
+      if(!days.length){toast('利用する曜日を選んでください');return}
+      const bad=days.find(d=>!e.week[d].pick.on&&!e.week[d].drop.on);if(bad){toast(WDJ[WD.indexOf(bad)]+'曜日のお迎え・お送りのどちらかを「利用」にしてください');return}}
     const id=e.id||uid('c');materializeVehicles();
-    put('clients',id,{name:e.name.trim(),note:e.note.trim(),vid:e.vid,patterns:e.patterns.map(p=>normPat(p,e))});ui.editClient=null;render();toast(e.name.trim()+' さんを保存しました')},
+    const keep=e.id&&S.clients[e.id]?S.clients[e.id]:{}; // 以前の形式の登録内容は消さずに残す
+    put('clients',id,{...keep,name:e.name.trim(),note:e.note.trim(),status:e.status,vid:e.vid,driver:e.driver,week:clone(e.week),flex:clone(e.flex)});
+    ui.editClient=null;render();toast(e.name.trim()+' さんを保存しました')},
   cdel(){const id=ui.editClient.id;if(ui.arm!=='c'+id){ui.arm='c'+id;render();return}del('clients',id);ui.editClient=null;ui.arm=null;render();toast('削除しました（作成済みの送迎表には残ります）')},
   hadd(){const n=document.getElementById('newHelper').value.trim();if(!n){toast('名前を入力してください');return}put('staff',uid('h'),{name:n,role:'helper',active:true});render();toast(n+' さんを添乗員に追加しました')},
   sdel(el){const id=el.dataset.id;if(ui.arm!=='s'+id){ui.arm='s'+id;render();return}del('staff',id);ui.arm=null;render()},
@@ -999,14 +1014,12 @@ const ACT={
 };
 const INP={ // 入力中（再描画しない）
   leg(el){const L=findR(el.dataset.k)[el.dataset.t];L[el.dataset.f]=el.value;markDirty();if(el.dataset.f==='driver')scheduleRender()},
-  c(el){ui.editClient[el.dataset.f]=el.value},
+  c(el){ui.editClient[el.dataset.f]=el.value;if(el.dataset.f==='vid')render()},
   oth(el){const o=ui.other,g=el.dataset.g,f=el.dataset.f;if(!g){o[f]=el.value;return}
     const L=o[g];if(el.type==='checkbox'){L.on=el.checked;render();return}L[f]=el.value;
     if(f==='vid'){L.driver=baseDriver(L.vid);L.helper=baseHelper(L.vid);render()}},
-  pat(el){const i=+el.dataset.i,p=ui.editClient.patterns[i],g=el.dataset.g,f=el.dataset.f;
-    if(!g){p[f]=el.value;return}
-    const L=p[g];if(el.type==='checkbox'){L.on=el.checked;render();return}
-    L[f]=el.value;if(f==='driver')return;if(el.value&&!L.on){L.on=true;const cb=document.getElementById(`p_${i}_${g}_on`);if(cb)cb.checked=true}},
+  cw(el){const L=ui.editClient.week[el.dataset.d][el.dataset.g];if(el.type==='checkbox'){L.on=el.checked;render();return}L[el.dataset.f]=el.value},
+  cf(el){const L=ui.editClient.flex[el.dataset.g];if(el.type==='checkbox'){L.on=el.checked;render();return}L[el.dataset.f]=el.value},
 };
 const CHG={ // 確定時
   date(el){if(el.value){ui.date=el.value;ui.day=null;render()}},
