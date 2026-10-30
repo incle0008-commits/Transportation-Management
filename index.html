@@ -116,7 +116,8 @@ table.grid th{font-size:13px;color:var(--muted);letter-spacing:.04em;background:
 .legbox .who{display:grid;grid-template-columns:auto 1fr 1fr;gap:8px;align-items:end}
 .legbox .who > .tag{align-self:center;font-size:14px}
 .legbox select{width:100%}
-table.trip{border-collapse:collapse;width:100%;min-width:470px}
+table.trip{border-collapse:collapse;width:100%;min-width:780px}
+table.trip tr.own td{background:var(--warn-soft)}
 table.trip th{font-size:12px;color:var(--muted);text-align:left;padding:2px 4px;font-weight:700}
 table.trip td{padding:3px 4px;border-top:1px solid var(--line);vertical-align:middle}
 table.trip td.n{font-weight:700;min-width:6em}
@@ -129,10 +130,14 @@ table.trip input[type=time]{min-height:40px;width:6.6em}
 .state{font-weight:700}
 .state.dirty{color:var(--warn)}
 .state.ok{color:var(--accent)}
-.tripf{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;align-items:end}
+.tripf{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;align-items:end}
 .tripf select{width:100%}
 .vcard.trip-pick{border-left:4px solid var(--pick)}
 .vcard.trip-drop{border-left:4px solid var(--drop)}
+.ofields{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px}
+.ofields select{width:100%}
+.olist{display:flex;flex-direction:column;gap:6px}
+.oitem{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:8px 10px}
 /* 利用者管理 */
 .wk td{white-space:nowrap}
 .wk .t{font-family:var(--font-num);font-size:13px;line-height:1.45}
@@ -238,7 +243,9 @@ table.sheet tr.none td{color:var(--muted);background:var(--surface)}
      trips:[ { id, type:"pick"|"drop", vid, driver, helper, dep, arr, auto } ],   … 送迎便。運転手・添乗員は便ごと
 
      riders:[ { key, cid, name, extra,
-                pick:{on,dep,arr,vid,tid,note}, drop:{on,dep,arr,vid,tid,note} } ] }   … tid＝乗る便
+                pick:{on,dep,arr,vid,tid,driver,helper,note}, drop:{…} } ] }
+       … tid＝乗る便。driver/helper が空なら便の運転手・添乗員、入っていればその利用者だけの設定。
+       … other:true は「その他」から当日だけ追加した人（レギュラー登録には入れない）
 */
 const WD=['sun','mon','tue','wed','thu','fri','sat'];
 const WDJ=['日','月','火','水','木','金','土'];
@@ -342,7 +349,7 @@ function oldLeg(s,k){const v=s[k];
   if(v&&typeof v==='object')return {on:!!v.on,dep:v.dep||'',arr:v.arr||''};
   if(typeof v==='string')return {on:!!s.on&&!!v,dep:'',arr:v};
   return {on:false,dep:'',arr:''}}
-function normPat(p,c){const L=x=>({on:!!(x&&x.on),dep:(x&&x.dep)||'',arr:(x&&x.arr)||''});
+function normPat(p,c){const L=x=>({on:!!(x&&x.on),dep:(x&&x.dep)||'',arr:(x&&x.arr)||'',driver:(x&&x.driver)||''});
   return {id:p.id||uid('p'),mode:p.mode==='date'?'date':'week',days:[...(p.days||[])],dates:[...(p.dates||[])].sort(),
     pick:L(p.pick),drop:L(p.drop),vid:vehicles().some(v=>v.id===p.vid)?p.vid:clientVid(c),note:p.note||''}}
 function patternsOf(c){
@@ -362,7 +369,7 @@ function scheduledOnDate(c,date){const p=patternFor(c,date);return !!(p&&(p.pick
 /* その日の迎え／送りの内容。予定がない日（臨時）は、その迎え／送りがある最初のパターンを使う */
 function legFor(c,date,k){
   const p=scheduledOnDate(c,date)?patternFor(c,date):patternsOf(c).find(q=>q[k].on);
-  return p?{...p[k],vid:p.vid,note:p.note}:{on:false,dep:'',arr:'',vid:clientVid(c),note:''};
+  return p?{...p[k],vid:p.vid,note:p.note}:{on:false,dep:'',arr:'',driver:'',vid:clientVid(c),note:''};
 }
 function defaultLegs(c,date){
   const all=TYPES.map(([k])=>k);
@@ -372,7 +379,7 @@ function defaultLegs(c,date){
 function upcomingDates(c,from){return [...new Set(patternsOf(c).filter(p=>p.mode==='date').flatMap(p=>p.dates))].filter(d=>d>=from).sort()}
 
 /* ---------- 当日データ（送迎便） ---------- */
-function normLeg(L,vid){L=L||{};if(L.time&&!L.arr)L.arr=L.time;delete L.time;return {on:!!L.on,dep:L.dep||'',arr:L.arr||'',vid:L.vid||vid,tid:L.tid||'',note:L.note||''}}
+function normLeg(L,vid){L=L||{};if(L.time&&!L.arr)L.arr=L.time;delete L.time;return {on:!!L.on,dep:L.dep||'',arr:L.arr||'',vid:L.vid||vid,tid:L.tid||'',driver:L.driver||'',helper:L.helper||'',note:L.note||''}}
 function newTrip(type,vid,auto){return {id:uid('t'),type,vid:vid||firstVid(),driver:'',helper:'',dep:'',arr:'',auto:!!auto}}
 function byDep(a,b){return (a.dep||'99').localeCompare(b.dep||'99')}
 function normalizeDay(d){
@@ -418,7 +425,7 @@ function makeRider(c,date,legs){
   const p=patternFor(c,date),extra=!scheduledOnDate(c,date);
   const r={key:uid('r'),cid:c.id,name:c.name,extra,byDate:!extra&&p.mode==='date'};
   TYPES.forEach(([k])=>{const L=legFor(c,date,k);
-    r[k]={on:legs.includes(k),dep:L.dep,arr:L.arr,vid:L.vid,tid:'',note:[L.note,c.note].filter(Boolean).join('　')}});
+    r[k]={on:legs.includes(k),dep:L.dep,arr:L.arr,vid:L.vid,tid:'',driver:L.driver||'',helper:'',note:[L.note,c.note].filter(Boolean).join('　')}});
   return r;
 }
 /* 車両ごとの一覧（Excelなど）：便の出発順 → 利用者の出発順 */
@@ -494,6 +501,13 @@ function clientCard(c){
     <div class="vh">${sch&&p.mode==='date'?'<span class="tag extra">日付指定</span> ':''}${vids.map(vname).map(esc).join('・')}${c.note?`　${esc(c.note)}`:''}${next?`<br>次の予定日 ${shortDate(next)}`:''}</div>
     <div class="legs">${legs}</div></div>`;
 }
+function legStaff(d,L,f){return L[f]||((tripById(d,L.tid)||{})[f])||''}
+function riderStaffSelect(role,val,tripVal,attrs){
+  const list=staffFor(role),names=list.map(s=>s.name);
+  let o=`<option value="">便と同じ（${esc(tripVal||(role==='helper'?'なし':'未定'))}）</option>`+list.map(s=>`<option ${s.name===val?'selected':''}>${esc(s.name)}</option>`).join('');
+  if(val&&!names.includes(val))o+=`<option selected>${esc(val)}</option>`;
+  return `<select ${attrs}>${o}</select>`;
+}
 function tripLabel(tr,i){return `${vname(tr.vid)}　${t(tr.dep)||'--:--'}発　${tr.driver||'運転手未定'}`}
 function tripCard(d,tr,i){
   const rs=tripRiders(d,tr),a=f=>`data-in="trip" data-id="${tr.id}" data-f="${f}"`,same=tripsOf(d,tr.type);
@@ -502,16 +516,18 @@ function tripCard(d,tr,i){
       <button class="btn small danger" data-act="tripdel" data-id="${tr.id}" ${rs.length?'disabled title="利用者を別の便に移すか外してから削除できます"':''}>便を削除</button></div>
     <div class="tripf">
       <label class="f">車両${vehSelect(tr.vid,`data-ch="tripveh" data-id="${tr.id}"`)}</label>
-      <label class="f">運転手${staffSelect('driver',tr.driver,a('driver'))}</label>
-      <label class="f">添乗員${staffSelect('helper',tr.helper,a('helper'))}</label>
+      <label class="f">便の運転手${staffSelect('driver',tr.driver,a('driver'))}</label>
+      <label class="f">便の添乗員${staffSelect('helper',tr.helper,a('helper'))}</label>
       <label class="f">出発時間<input type="time" value="${tr.dep}" ${a('dep')}></label>
       <label class="f">到着時間<input type="time" value="${tr.arr}" ${a('arr')}></label>
     </div>
-    ${rs.length?`<div class="scroll"><table class="trip"><thead><tr><th>利用者</th><th>出発時間</th><th>到着時間</th><th>便</th><th>備考</th><th></th></tr></thead><tbody>
+    ${rs.length?`<div class="scroll"><table class="trip"><thead><tr><th>利用者</th><th>出発時間</th><th>到着時間</th><th>運転手</th><th>添乗員</th><th>便</th><th>備考</th><th></th></tr></thead><tbody>
     ${rs.map(r=>{const k=tr.type,L=r[k],b=f=>`data-in="leg" data-k="${r.key}" data-t="${k}" data-f="${f}"`;
-      return `<tr><td class="n">${esc(r.name)}${r.extra?' <span class="tag extra">臨時</span>':''}</td>
+      return `<tr class="${L.driver?'own':''}"><td class="n">${esc(r.name)}${r.other?' <span class="tag extra">その他</span>':r.extra?' <span class="tag extra">臨時</span>':''}</td>
       <td><input type="time" value="${L.dep}" ${b('dep')} aria-label="${esc(r.name)} ${TL[k]}の出発時間"></td>
       <td><input type="time" value="${L.arr}" ${b('arr')} aria-label="${esc(r.name)} ${TL[k]}の到着時間"></td>
+      <td>${riderStaffSelect('driver',L.driver,tr.driver,`${b('driver')} aria-label="${esc(r.name)}の${TL[k]}の運転手"`)}</td>
+      <td>${riderStaffSelect('helper',L.helper,tr.helper,`${b('helper')} aria-label="${esc(r.name)}の${TL[k]}の添乗員"`)}</td>
       <td><select data-ch="legtrip" data-k="${r.key}" data-t="${k}" aria-label="乗る便">${same.map((x,j)=>`<option value="${x.id}" ${x.id===tr.id?'selected':''}>${TL[k]}便${j+1}：${esc(tripLabel(x))}</option>`).join('')}</select></td>
       <td><input type="text" value="${esc(L.note)}" ${b('note')} aria-label="備考"></td>
       <td><button class="x" data-act="legoff" data-k="${r.key}" data-t="${k}" aria-label="${esc(r.name)}の${TL[k]}を外す" title="外す">×</button></td></tr>`}).join('')}
@@ -543,21 +559,40 @@ function vDay(){
   </section>
   ${others.length?`<section class="stack"><h2>当日だけ追加する利用者（${others.length}名）</h2>
     <div class="cards">${others.map(clientCard).join('')}</div></section>`:''}
-  <section class="panel soft row">
-    <b>登録していない方を追加</b>
-    <input type="text" id="addName" placeholder="名前を入力" value="${esc(ui.addName)}">
-    <button class="btn" data-act="addfree" data-t="pick">お迎えに追加</button>
-    <button class="btn" data-act="addfree" data-t="drop">お送りに追加</button>
-    ${free.length?`<span class="note">追加済み：${free.map(r=>esc(r.name)).join('、')}</span>`:''}
+  <section class="panel soft stack" id="otherSec">
+    <div class="row"><h2>その他</h2><span class="note">登録していない方や、その日だけ送迎が必要になった方を追加します。この日の送迎表だけに入り、レギュラー登録には入りません。</span><span class="spacer"></span>
+      ${ui.other?'':`<button class="btn primary" data-act="otheropen">＋ その他</button>`}</div>
+    ${ui.other?otherForm(ui.other):''}
+    ${free.length?`<div class="olist">${free.map(r=>`<div class="oitem"><b>${esc(r.name)}</b>${TYPES.filter(([k])=>r[k].on).map(([k,l])=>{const L=r[k];return `<span class="tag ${k}">${l}</span><span class="num">${t(L.dep)||'--:--'}→${t(L.arr)||'--:--'}</span><span class="note">${esc(vname((tripById(d,L.tid)||{}).vid||L.vid))}・${esc(legStaff(d,L,'driver')||'運転手未定')}</span>`}).join('')}
+      <span class="spacer"></span><button class="btn small danger" data-act="otherdel" data-k="${r.key}">取り消す</button></div>`).join('')}</div>`:''}
   </section>
   <section class="stack"><div class="row"><h2>${shortDate(ui.date)} の送迎便</h2><span class="spacer"></span>
       <button class="btn small" data-act="tripcopy">前回の同じ曜日の便を読み込む</button></div>
-    <p class="note" style="margin:0">便ごとに車両・運転手・添乗員・出発／到着時間を設定します。同じ車両で何便でも作れ、1つの便を変えても他の便は変わりません。利用者は、同じ車両・区分の便のうち出発時間が近い便に自動で入ります。</p>
+    <p class="note" style="margin:0">便ごとに車両・運転手・添乗員・出発／到着時間を設定します。同じ車両で何便でも作れ、1つの便を変えても他の便は変わりません。利用者は、同じ車両・区分の便のうち出発時間が近い便に自動で入ります。<br>利用者ごとに運転手・添乗員を変えるときは、表の「運転手」「添乗員」で選びます（色の付いた行が個別設定）。「便と同じ」にすると便の運転手に戻ります。</p>
     ${TYPES.map(([k,l])=>{const ts=tripsOf(d,k);return `<div class="stack" style="gap:10px">
       <div class="row"><h3>${l}便（${ts.length}便）</h3><span class="spacer"></span><button class="btn small" data-act="tripadd" data-t="${k}">＋ ${l}便を追加</button></div>
-      ${ts.length?`<div class="vgrid">${ts.map((x,i)=>tripCard(d,x,i)).join('')}</div>`:`<p class="note" style="margin:0">${l}便はまだありません。利用者を選ぶと自動で作られます。</p>`}</div>`}).join('')}
+      ${ts.length?`<div class="stack" style="gap:12px">${ts.map((x,i)=>tripCard(d,x,i)).join('')}</div>`:`<p class="note" style="margin:0">${l}便はまだありません。利用者を選ぶと自動で作られます。</p>`}</div>`}).join('')}
   </section></div>`;
 }
+function otherForm(o){
+  const a=(g,f)=>`data-in="oth"${g?` data-g="${g}"`:''} data-f="${f}"`;
+  const leg=(g,l)=>{const L=o[g];return `<div class="plg ${g} ${L.on?'':'off'}">
+    <label class="row" style="gap:6px"><input type="checkbox" id="o_${g}_on" ${a(g,'on')} ${L.on?'checked':''}> <span class="tag ${g}">${l}</span> あり</label>
+    <div class="ofields">
+      <label class="f">車両${vehSelect(L.vid,`id="o_${g}_vid" ${a(g,'vid')}`)}</label>
+      <label class="f">運転手${staffSelect('driver',L.driver,`id="o_${g}_driver" ${a(g,'driver')}`)}</label>
+      <label class="f">添乗員${staffSelect('helper',L.helper,`id="o_${g}_helper" ${a(g,'helper')}`)}</label>
+      <label class="f">出発時間<input type="time" id="o_${g}_dep" value="${L.dep}" ${a(g,'dep')}></label>
+      <label class="f">到着時間<input type="time" id="o_${g}_arr" value="${L.arr}" ${a(g,'arr')}></label>
+    </div></div>`};
+  return `<div class="editor">
+    <div class="fgrid"><label class="f">利用者名<input type="text" id="o_name" value="${esc(o.name)}" ${a('','name')} placeholder="例：見学の方"></label>
+      <label class="f">備考<input type="text" id="o_note" value="${esc(o.note)}" ${a('','note')} placeholder="例：体験利用"></label></div>
+    <div class="plegs">${leg('pick','お迎え')}${leg('drop','お送り')}</div>
+    <div class="row"><button class="btn primary" data-act="otheradd">この日の送迎表に追加</button><button class="btn" data-act="otherclose">やめる</button></div>
+  </div>`;
+}
+function newOther(){const fv=firstVid(),L=()=>({on:true,vid:fv,driver:'',helper:'',dep:'',arr:''});return {name:'',note:'',pick:L(),drop:L()}}
 function saveBar(){
   const saved=!!S.days[ui.date],dirty=ui.dayDirty||!saved;
   return `<div class="savebar"><div class="wrap">
@@ -580,7 +615,7 @@ function excelGroups(ym,vid){
   Object.keys(S.days).filter(k=>k.startsWith(ym+'-')).sort().forEach(date=>{
     const d=normalizeDay(clone(S.days[date]));
     const L=k=>legRiders(d,vid,k).map(r=>{const tr=tripById(d,r[k].tid)||{};
-      return {name:r.name,dep:r[k].dep||tr.dep||'',arr:r[k].arr||tr.arr||'',note:r[k].note,driver:tr.driver||'',helper:tr.helper||''}});
+      return {name:r.name,dep:r[k].dep||tr.dep||'',arr:r[k].arr||tr.arr||'',note:r[k].note,driver:r[k].driver||tr.driver||'',helper:r[k].helper||tr.helper||''}});
     const g={date,pick:L('pick'),drop:L('drop')};
     if(g.pick.length||g.drop.length)out.push(g);
   });
@@ -777,7 +812,7 @@ function newPat(mode,vid){return {id:uid('p'),mode,days:[],dates:[],pick:{on:tru
 function newClient(){const vid=firstVid();return {id:null,name:'',note:'',vid,patterns:[newPat('week',vid)]}}
 function wdLabel(days){return PWD.filter(d=>days.includes(d)).map(d=>WDJ[WD.indexOf(d)]).join('・')}
 function patWhen(p){return p.mode==='week'?(p.days.length?`毎週 ${wdLabel(p.days)}`:'曜日未選択'):(p.dates.length?`日付 ${p.dates.map(md).join('・')}`:'日付未選択')}
-function patLegs(p){const f=(L,lab,cls)=>`<span class="${cls}">${lab} ${L.on?`${t(L.dep)||'--'}→${t(L.arr)||'--'}`:'なし'}</span>`;return f(p.pick,'迎','p')+'　'+f(p.drop,'送','d')}
+function patLegs(p){const f=(L,lab,cls)=>`<span class="${cls}">${lab} ${L.on?`${t(L.dep)||'--'}→${t(L.arr)||'--'}${L.driver?'（'+esc(L.driver)+'）':''}`:'なし'}</span>`;return f(p.pick,'迎','p')+'　'+f(p.drop,'送','d')}
 function vClients(){
   const list=clients(),e=ui.editClient;
   return `<div class="stack">
@@ -797,7 +832,8 @@ function patEditor(p,i){
   const leg=(g,l)=>{const L=p[g];return `<div class="plg ${g} ${L.on?'':'off'}">
     <label class="row" style="gap:6px"><input type="checkbox" id="p_${i}_${g}_on" ${a(g,'on')} ${L.on?'checked':''}> <span class="tag ${g}">${l}</span> 利用する</label>
     <div class="row"><label class="f">出発時間<input type="time" id="p_${i}_${g}_dep" value="${L.dep}" ${a(g,'dep')}></label>
-    <label class="f">到着時間<input type="time" id="p_${i}_${g}_arr" value="${L.arr}" ${a(g,'arr')}></label></div></div>`};
+    <label class="f">到着時間<input type="time" id="p_${i}_${g}_arr" value="${L.arr}" ${a(g,'arr')}></label>
+    <label class="f">基本の運転手${riderStaffSelect('driver',L.driver,'',`id="p_${i}_${g}_driver" ${a(g,'driver')}`).replace('便と同じ（未定）','指定なし（便の運転手）')}</label></div></div>`};
   return `<div class="pat">
     <div class="row"><h3>パターン${i+1}</h3>
       <span class="seg" role="group" aria-label="指定のしかた"><button data-act="pmode" data-i="${i}" data-m="week" aria-pressed="${p.mode==='week'}">曜日で指定</button><button data-act="pmode" data-i="${i}" data-m="date" aria-pressed="${p.mode==='date'}">日付で指定</button></span>
@@ -875,7 +911,7 @@ function materializeVehicles(){if(!Object.keys(S.vehicles).length)vehicles().for
 function go(view){if(location.hash!=='#'+view)location.hash=view;else{ui.view=view;render()}}
 const ACT={
   goday(el,e){e.preventDefault();ui.date=el.dataset.date;ui.day=null;go('day')},
-  dshift(el){ui.date=addDays(ui.date,+el.dataset.n);ui.day=null;render()},
+  dshift(el){ui.date=addDays(ui.date,+el.dataset.n);ui.day=null;ui.other=null;render()},
   dtoday(){ui.date=todayStr();ui.day=null;render()},
   pickname(el){const c=S.clients[el.dataset.cid]&&{id:el.dataset.cid,...S.clients[el.dataset.cid]};const r=riderOf(c.id);
     if(r&&(r.pick.on||r.drop.on)){ui.day.riders=ui.day.riders.filter(x=>x!==r)}
@@ -899,10 +935,14 @@ const ACT={
     d.riders.forEach(r=>TYPES.forEach(([k])=>{if(r[k].on)r[k].tid=''}));
     syncTrips(d);d.trips=d.trips.filter(x=>x.auto?tripRiders(d,x).length:true);
     ui.dayDirty=true;render();toast(shortDate(prev)+' の便（'+src.trips.length+'便）を読み込みました')},
-  addfree(el){const n=document.getElementById('addName').value.trim();if(!n){toast('名前を入力してください');return}
-    const k=el.dataset.t,fv=firstVid();let r=ui.day.riders.find(x=>!x.cid&&x.name===n);
-    if(!r){r={key:uid('r'),cid:null,name:n,extra:true,pick:{on:false,dep:'',arr:'',vid:fv,note:''},drop:{on:false,dep:'',arr:'',vid:fv,note:''}};ui.day.riders.push(r)}
-    r[k].on=true;ui.addName='';ui.dayDirty=true;render();toast(n+' さんを'+TL[k]+'に追加しました。時間を入力してください')},
+  otheropen(){ui.other=newOther();render();setTimeout(()=>document.getElementById('o_name')?.focus(),0)},
+  otherclose(){ui.other=null;render()},
+  otheradd(){const o=ui.other,n=o.name.trim();if(!n){toast('利用者名を入力してください');return}
+    if(!o.pick.on&&!o.drop.on){toast('お迎え・お送りのどちらかを「あり」にしてください');return}
+    const r={key:uid('r'),cid:null,name:n,extra:true,other:true};
+    TYPES.forEach(([k])=>{const L=o[k];r[k]={on:L.on,dep:L.dep,arr:L.arr,vid:L.vid,tid:'',driver:L.driver,helper:L.helper,note:o.note.trim()}});
+    ui.day.riders.push(r);ui.other=null;ui.dayDirty=true;render();toast(n+' さんをこの日の送迎表に追加しました（「送迎表を作成」で保存）')},
+  otherdel(el){ui.day.riders=ui.day.riders.filter(r=>r.key!==el.dataset.k);ui.dayDirty=true;render()},
   saveday(){const d=clone(ui.day);d.savedAt=new Date().toISOString();put('days',ui.date,d);ui.day=null;ui.dayDirty=false;render();toast(shortDate(ui.date)+' の送迎表を作成しました')},
   tosheet(){ui.month=ui.date.slice(0,7);go('sheet')},
   mshift(el){const [y,m]=ui.month.split('-').map(Number);const d=new Date(y,m-1+(+el.dataset.n),1);ui.month=d.getFullYear()+'-'+pad(d.getMonth()+1);render()},
@@ -946,12 +986,14 @@ const ACT={
 };
 const INP={ // 入力中（再描画しない）
   trip(el){const tr=tripById(ui.day,el.dataset.id),f=el.dataset.f;tr[f]=el.value;if(f==='dep'||f==='arr')tr.auto=false;markDirty()},
-  leg(el){findR(el.dataset.k)[el.dataset.t][el.dataset.f]=el.value;markDirty()},
+  leg(el){findR(el.dataset.k)[el.dataset.t][el.dataset.f]=el.value;markDirty();if(el.tagName==='SELECT')el.closest('tr')?.classList.toggle('own',!!findR(el.dataset.k)[el.dataset.t].driver)},
   c(el){ui.editClient[el.dataset.f]=el.value},
+  oth(el){const o=ui.other,g=el.dataset.g,f=el.dataset.f;if(!g){o[f]=el.value;return}
+    const L=o[g];if(el.type==='checkbox'){L.on=el.checked;render();return}L[f]=el.value},
   pat(el){const i=+el.dataset.i,p=ui.editClient.patterns[i],g=el.dataset.g,f=el.dataset.f;
     if(!g){p[f]=el.value;return}
     const L=p[g];if(el.type==='checkbox'){L.on=el.checked;render();return}
-    L[f]=el.value;if(el.value&&!L.on){L.on=true;const cb=document.getElementById(`p_${i}_${g}_on`);if(cb)cb.checked=true}},
+    L[f]=el.value;if(f==='driver')return;if(el.value&&!L.on){L.on=true;const cb=document.getElementById(`p_${i}_${g}_on`);if(cb)cb.checked=true}},
 };
 const CHG={ // 確定時
   date(el){if(el.value){ui.date=el.value;ui.day=null;render()}},
